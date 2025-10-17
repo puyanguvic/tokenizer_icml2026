@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "domain-specific-tokenization"
+version = "0.1.0"
+description = "Research toolkit for domain-specific tokenizer consistency"
+readme = "README.md"
+authors = [{name = "Pu Yang"}]
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+dependencies = ["tokenizers>=0.20.0", "tqdm>=4.65.0", "numpy>=1.26"]
+
