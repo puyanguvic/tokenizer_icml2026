@@ -1,1 +1,21 @@
-todo
+\section{Discussion and Future Work}
+\label{sec:discussion}
+
+\subsection{Implications}
+
+- \textbf{Model efficiency.} Fewer tokens with consistent boundaries reduce sequence lengths and improve cache locality.
+- \textbf{Auditability.} Exact reversibility enables robust data governance and forensic reproducibility.
+- \textbf{Cross‑domain generality.} A single abstraction spans code, logs, protocols, and biostrings.
+
+\subsection{Limitations}
+
+- \textbf{Grammar dependency.} Poor priors may underfit certain edge cases; careful pattern design is needed.
+- \textbf{Vocabulary growth.} Some domains require larger token inventories to capture semantics while preserving constraints.
+- \textbf{Approximate marginalization.} K‑best approximations introduce modeling bias when heavy overlap exists.
+
+\subsection{Future Directions}
+
+- Jointly learn grammar priors with data via program synthesis or differentiable regular expressions.
+- Explore domain adaptation with lightweight vocabulary edits under consistency constraints.
+- Integrate DST with retrieval‑augmented or tool‑augmented LMs for structured domains.
+- Study representation bias reductions and fairness implications from consistent tokenization.

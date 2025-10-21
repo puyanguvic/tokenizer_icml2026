@@ -383,10 +383,13 @@ Marginalization ($K$) & $O(K|x|)$ & $O(K)$ & stochastic approx. \\
 \paragraph{Visualization.}
 \begin{figure}[h]
 \centering
-\includegraphics[width=0.9\textwidth]{figures/dst_pipeline.pdf}
-\caption{
-DST pipeline:
-(1) Corpus → (2) Vocabulary → (3) DFST Encoder/Decoder → (4) Optional Marginalization → (5) Model Integration.}
+% Guard include in case the figure is not yet available
+\IfFileExists{figures/dst_pipeline.pdf}{%
+  \includegraphics[width=0.9\textwidth]{figures/dst_pipeline.pdf}%
+}{%
+  \fbox{DST pipeline figure placeholder}%
+}
+\caption{DST pipeline: (1) Corpus → (2) Vocabulary → (3) DFST Encoder/Decoder → (4) Optional Marginalization → (5) Model Integration.}
 \label{fig:dst_pipeline}
 \end{figure}
 
@@ -403,4 +406,3 @@ a unifying front-end for models trained on
 structured or semi-structured data,
 ranging from programming languages and logs
 to chemical and genomic sequences.
-
