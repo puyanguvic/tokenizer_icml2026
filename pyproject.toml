@@ -10,5 +10,44 @@ readme = "README.md"
 authors = [{name = "Pu Yang"}]
 license = {text = "Apache-2.0"}
 requires-python = ">=3.9"
-dependencies = ["tokenizers>=0.20.0", "tqdm>=4.65.0", "numpy>=1.26"]
+dependencies = [
+    "tokenizers>=0.20.0",
+    "tqdm>=4.65.0",
+    "numpy>=1.26",
+]
+keywords = ["tokenization", "nlp", "domain-specific", "research"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
+[project.optional-dependencies]
+datasets = ["datasets>=2.14"]
+dev = [
+    "pytest>=7.4",
+    "ruff>=0.1.8",
+    "mypy>=1.8",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["builder", "http_tokenizer", "metrics"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["dst*"]
+
+[tool.uv]
+package = true
+dev-dependencies = [
+    "datasets>=2.14",
+    "pytest>=7.4",
+    "ruff>=0.1.8",
+    "mypy>=1.8",
+]

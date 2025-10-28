@@ -1,14 +1,12 @@
 \begin{abstract}
-Tokenization is a critical but under-studied component of large-language-model (LLM) pipelines.
+Tokenization is a critical but understudied component of large language model (LLM) pipelines.
 Existing subword methods fragment structure and lose invertibility on enterprise and scientific data, inflating context length and undermining auditability.
-We present Domain-Specific Tokenization (DST), a reliable and efficient framework that guarantees exact reconstruction while reducing token counts.
+We introduce Domain-Specific Tokenization (DST), a reliable and efficient framework that guarantees exact reconstruction while reducing token counts.
 DST formalizes tokenization as paired mappings $(\tau,\kappa)$, proving estimator correctness is equivalent to perfect reversibility, and compiles these mappings into deterministic finite-state transducers for linear-time processing.
-A grammar-guided vocabulary-induction algorithm integrates domain structure and maintains full byte coverage.
-Across code, configuration, protocol, and biosequence corpora, DST achieves 100 % round-trip fidelity and 10–20 % token reduction, improving throughput and memory efficiency without harming general-language performance.
-DST provides a practical, auditable front-end for domain-aware LLMs in data-centric and regulated applications.
+A grammar-guided vocabulary induction algorithm integrates domain structure and maintains full byte coverage.
+Across code, configuration, protocol, and biosequence corpora, DST achieves 100\% round-trip fidelity and 10–20\% token reduction, improving throughput and memory efficiency without harming general-language performance.
+DST provides a practical, auditable front end for domain-aware LLMs in data-centric and regulated applications.
 \end{abstract}
-
-\maketitle
 
 \section{Introduction}
 \label{sec:intro}
@@ -103,7 +101,10 @@ Prior work optimizes token frequency, adaptivity, or domain coverage; DST introd
 It bridges the gap between theoretical soundness and deployable efficiency—properties increasingly crucial for data-centric and enterprise LLM applications.
 
 
-\section{Theory}
+\section{Methodology}
+\label{sec:method}
+
+\subsection{Theory}
 \label{sec:theory}
 
 \noindent We formalize tokenization as a paired mapping between character strings and token sequences.
@@ -140,9 +141,6 @@ If $\mathrm{Range}(\kappa)$ does not cover $\mathrm{Supp}(P)$, certain strings a
 
 \paragraph{DFST realizability conditions.}
 Non-erasing tokens (no $\varepsilon$ outputs), maximal-munch determinism (unique tokenization path), and finite preimage per string suffice for a deterministic finite-state implementation of $(\tau,\kappa)$ with linear-time encoding and decoding.
-
-\section{Methodology}
-\label{sec:method}
 
 This section outlines how Domain-Specific Tokenization (DST) operationalizes the theoretical guarantees of reliability and finite-state realizability in a practical, scalable pipeline.
 DST is designed to fit directly into modern data-processing and LLM training workflows, requiring no changes to downstream architectures.
@@ -280,8 +278,8 @@ All artifacts—vocabularies, DFST transition tables, and tokenizer configuratio
 Empirically, this process yields 10–20\% sequence-length reduction and 100\% invertibility, while preserving general-domain accuracy within 0.5–1 points on MMLU and HellaSwag.
 These results make DST suitable for continuous vocabulary maintenance in production data pipelines, where transparency, efficiency, and auditability are mandatory.
 
-\section{Results and Analysis}
-\label{sec:results}
+\section{Experiments}
+\label{sec:experiments}
 
 We evaluate DST across multiple structured and semi-structured domains and compare it with widely used subword and byte-level baselines.
 Our analysis focuses on three practical criteria critical to domain LLM deployment:

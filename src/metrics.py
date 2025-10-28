@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from .dst.pipeline import TOKEN_SPLIT_RE
-from .dst.tokenizer import DSTTokenizer
+try:
+    from .dst.pipeline import TOKEN_SPLIT_RE
+    from .dst.tokenizer import DSTTokenizer
+except ImportError:  # pragma: no cover - script usage fallback
+    from dst.pipeline import TOKEN_SPLIT_RE  # type: ignore
+    from dst.tokenizer import DSTTokenizer  # type: ignore
 
 
 def _baseline_token_count(text: str) -> int:
