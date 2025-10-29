@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+*.pyd
+
+# Environments
+.env
+.venv/
+venv/
+env/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.pyre/
+
+# Editors / IDE
+.idea/
+.vscode/
+*.iml
+
+# OS / Misc
+.DS_Store
+*.swp
+*.swo
+.ipynb_checkpoints/
+
+# Tokenizer artifacts
+dst_tokenizer.json
+tokenizer.json
+
+# Logs
+logs/
+*.log
+
+# LaTeX build artifacts (docs/)
+docs/*.aux
+docs/*.bbl
+docs/*.blg
+docs/*.toc
+docs/*.out
+docs/*.lof
+docs/*.lot
+docs/*.fls
+docs/*.fdb_latexmk
+docs/*.synctex.gz
+docs/*.pdf

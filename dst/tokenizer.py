@@ -38,3 +38,29 @@ class DSTTokenizer:
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(obj, f, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def from_vocab(cls, vocab: list[str]):
+        """Construct a DSTTokenizer directly from an explicit vocabulary.
+
+        This bypasses grammar-guided induction and simply builds the DFST
+        trie from the provided tokens.
+        """
+        dfst = DFST()
+        for token in vocab:
+            dfst.add_token(token)
+        return cls(vocab, dfst)
+
+    @classmethod
+    def load_json(cls, path: str):
+        """Load a serialized tokenizer JSON and rebuild DFST.
+
+        Expects the format produced by `save_json`, where `vocab` is a
+        mapping of token -> id. Tokens are restored in id order.
+        """
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        vocab_map = obj.get("vocab", {})
+        # Restore tokens in id order for stable indexing
+        tokens_sorted = [t for t, _ in sorted(vocab_map.items(), key=lambda kv: kv[1])]
+        return cls.from_vocab(tokens_sorted)

@@ -2,392 +2,196 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_PATH = PROJECT_ROOT / "src"
-if str(SRC_PATH) not in sys.path:
-    sys.path.insert(0, str(SRC_PATH))
+from dst.tokenizer import DSTTokenizer
 
-try:  # pragma: no cover - optional dependency
-    from datasets import Dataset  # type: ignore
-    from datasets import load_dataset  # type: ignore
-except ImportError:  # pragma: no cover - optional dependency
-    Dataset = None  # type: ignore
-    load_dataset = None  # type: ignore
-
-from http_tokenizer import HTTP_GRAMMAR_PATTERNS, http_clean_line  # noqa: E402
-from metrics import (  # noqa: E402
-    average_token_length,
-    compression_ratio,
+from .metrics import (
+    compression_ratio_vs_chars,
     round_trip_accuracy,
+    throughput,
+    tokens_per_sequence,
 )
-from metrics import _baseline_token_count  # type: ignore  # noqa: E402
-from dst.pipeline import CandidateExtractorConfig, ScoreWeights, build_dst_tokenizer  # noqa: E402
 
 
-SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+# Simple domain profiles with regex patterns guiding vocabulary induction
+PROTOCOL_PATTERNS = [
+    r"https?://[^\s]+",
+    r"\b\d{1,3}(\.\d{1,3}){3}\b",  # IPv4
+    r"[A-Za-z_][A-Za-z0-9_]*",
+    r"[A-Za-z0-9_\-]+=[A-Za-z0-9_\-]+",
+    r"[A-Za-z0-9_\-]+\.[a-z]{2,6}",
+]
 
-
-def _default_normalizer(text: str) -> str:
-    return text.strip()
-
-
-def _config_normalizer(text: str) -> str:
-    lines = [line.rstrip().replace("\t", "    ") for line in text.splitlines()]
-    return "\n".join(lines)
-
-
-def _code_normalizer(text: str) -> str:
-    lines = [line.rstrip() for line in text.splitlines()]
-    return "\n".join(lines)
-
-
-def _bio_normalizer(text: str) -> str:
-    return "".join(text.split()).upper()
-
-
-CONFIG_GRAMMAR_PATTERNS = [
-    r"[A-Za-z0-9_\-]+\s*:\s*[^\n#]+",  # YAML-style key: value
+CONFIG_PATTERNS = [
+    r"[A-Za-z0-9_\-]+\s*:\s*[^\n#]+",  # YAML-like key: value
     r"-\s+[^\s]+",  # list entries
-    r"\{[^{}]+\}",  # inline JSON objects
+    r"\{[^{}]+\}",  # inline JSON
     r"\[[^\[\]]+\]",  # inline arrays
-    r"\$\{[A-Za-z0-9_\.\-:]+\}",  # templated placeholders
+    r"\$\{[A-Za-z0-9_\.\-:]+\}",  # placeholders
 ]
 
-CODE_GRAMMAR_PATTERNS = [
-    r"def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(",  # function definitions
-    r"class\s+[A-Za-z_][A-Za-z0-9_]*",  # class definitions
-    r"[A-Za-z_][A-Za-z0-9_]*\s*=\s*",  # assignments
-    r"[A-Za-z_][A-Za-z0-9_]*\s*\(",  # function calls
-    r"import\s+[A-Za-z0-9_\.,\s]+",  # import statements
-    r"\"[^\"]+\"|\'[^\']+\'",  # string literals
+CODE_PATTERNS = [
+    r"def\s+[A-Za-z_][A-Za-z0-9_]*\s*\(",
+    r"class\s+[A-Za-z_][A-Za-z0-9_]*",
+    r"[A-Za-z_][A-Za-z0-9_]*\s*=\s*",
+    r"[A-Za-z_][A-Za-z0-9_]*\s*\(",
+    r"import\s+[A-Za-z0-9_\.,\s]+",
+    r"\"[^\"]+\"|\'[^\']+\'",
 ]
 
-BIO_GRAMMAR_PATTERNS = [
+BIO_PATTERNS = [
     r">[^\n]+",  # FASTA headers
     r"[ACGTN]{6,}",  # nucleotide runs
-    r"[A-Z]{3}\s+[A-Z]{3}\s+[A-Z]{3}",  # codon triplets
 ]
 
 
-@dataclass
-class DomainRecipe:
-    name: str
-    description: str
-    normalizer: Callable[[str], str]
-    grammar_patterns: Sequence[str]
-    preserve_case: bool = True
-    vocab_size: int = 32000
-
-
-DOMAIN_RECIPES: Dict[str, DomainRecipe] = {
-    "protocol": DomainRecipe(
-        name="protocol",
-        description="HTTP / protocol traces with percent-decoding normalization.",
-        normalizer=http_clean_line,
-        grammar_patterns=HTTP_GRAMMAR_PATTERNS,
-        preserve_case=True,
-        vocab_size=32000,
-    ),
-    "config": DomainRecipe(
-        name="config",
-        description="YAML / JSON configuration snippets.",
-        normalizer=_config_normalizer,
-        grammar_patterns=CONFIG_GRAMMAR_PATTERNS,
-        preserve_case=False,
-        vocab_size=24000,
-    ),
-    "code": DomainRecipe(
-        name="code",
-        description="Source code functions and class definitions.",
-        normalizer=_code_normalizer,
-        grammar_patterns=CODE_GRAMMAR_PATTERNS,
-        preserve_case=True,
-        vocab_size=32000,
-    ),
-    "bio": DomainRecipe(
-        name="bio",
-        description="Biosequence data (DNA/RNA) with FASTA headers.",
-        normalizer=_bio_normalizer,
-        grammar_patterns=BIO_GRAMMAR_PATTERNS,
-        preserve_case=False,
-        vocab_size=20000,
-    ),
+DOMAIN_PATTERNS: Dict[str, Sequence[str]] = {
+    "protocol": PROTOCOL_PATTERNS,
+    "config": CONFIG_PATTERNS,
+    "code": CODE_PATTERNS,
+    "bio": BIO_PATTERNS,
+    "generic": [],  # fall back to defaults in dst.vocab
 }
 
 
-def _split_samples(samples: Sequence[str], eval_ratio: float, seed: int) -> Tuple[List[str], List[str]]:
-    if not samples:
-        return [], []
-    rng = random.Random(seed)
-    indices = list(range(len(samples)))
-    rng.shuffle(indices)
-    cutoff = max(1, int(len(samples) * (1.0 - eval_ratio)))
-    train_indices = indices[:cutoff]
-    eval_indices = indices[cutoff:]
-    train = [samples[i] for i in train_indices]
-    eval_set = [samples[i] for i in eval_indices] or train[:max(1, len(train) // 5)]
-    return train, eval_set
+# Baseline tokenizers implemented locally (no external deps)
+class ByteTokenizer:
+    def encode(self, text: str) -> List[str]:
+        return list(text)
+
+    def decode(self, tokens: List[str]) -> str:
+        return "".join(tokens)
 
 
-def _load_hf_samples(
-    name: str,
-    split: str,
-    text_field: str,
-    limit: Optional[int],
-    streaming: bool = False,
-) -> List[str]:
-    if load_dataset is None:  # pragma: no cover - optional dependency
-        raise RuntimeError("The 'datasets' package is required to load Hugging Face datasets.")
+class WhitespaceTokenizer:
+    def encode(self, text: str) -> List[str]:
+        return text.split()
 
-    dataset = load_dataset(name, split=split, streaming=streaming)
-
-    def _extract(example):
-        value = example
-        for part in text_field.split("."):
-            value = value[part]
-        return "" if value is None else str(value)
-
-    samples: List[str] = []
-    if streaming:
-        assert limit is not None, "Streaming mode requires an explicit limit."
-        for example in dataset:  # type: ignore[attr-defined]
-            samples.append(_extract(example))
-            if len(samples) >= limit:
-                break
-    else:
-        assert isinstance(dataset, Dataset)
-        effective_limit = min(limit or len(dataset), len(dataset))
-        for example in dataset.shuffle(seed=13).select(range(effective_limit)):  # type: ignore[attr-defined]
-            samples.append(_extract(example))
-    return samples
+    def decode(self, tokens: List[str]) -> str:
+        # Loses original whitespace → not invertible in general
+        return " ".join(tokens)
 
 
-def _load_local_samples(path: Path, limit: Optional[int]) -> List[str]:
+def avg_tokens_baseline(tokenizer, corpus: Iterable[str]) -> float:
+    total_tokens = 0
+    total = 0
+    for line in corpus:
+        total += 1
+        total_tokens += len(tokenizer.encode(line))
+    return (total_tokens / total) if total else 0.0
+
+
+def load_corpus(path: Path) -> List[str]:
     if not path.exists():
         raise FileNotFoundError(f"Corpus not found: {path}")
     if path.suffix.lower() in {".txt", ".log"}:
-        with path.open("r", encoding="utf-8") as handle:
-            lines = [line.rstrip("\n") for line in handle]
+        with path.open("r", encoding="utf-8") as f:
+            return [line.rstrip("\n") for line in f]
     elif path.suffix.lower() in {".jsonl", ".json"}:
-        import json  # local import for optional dependency
-
-        lines = []
-        with path.open("r", encoding="utf-8") as handle:
-            for raw in handle:
+        rows: List[str] = []
+        with path.open("r", encoding="utf-8") as f:
+            for raw in f:
                 raw = raw.strip()
                 if not raw:
                     continue
-                record = json.loads(raw)
-                value = record.get("text") or record.get("content") or record.get("value")
-                if value is None:
-                    continue
-                lines.append(str(value))
+                obj = json.loads(raw)
+                text = obj.get("text") or obj.get("content") or obj.get("value")
+                if text is not None:
+                    rows.append(str(text))
+        return rows
     else:
         raise ValueError(f"Unsupported corpus format: {path.suffix}")
 
-    return lines[:limit] if limit is not None else lines
 
+def run(args) -> dict:
+    corpus = load_corpus(args.corpus)
+    if args.limit and args.limit > 0:
+        corpus = corpus[: args.limit]
+    if not corpus:
+        raise ValueError("Empty corpus after filtering. Provide a non-empty dataset.")
 
-def _normalize_samples(samples: Iterable[str], normalizer: Callable[[str], str], preserve_case: bool) -> List[str]:
-    normalized = []
-    for sample in samples:
-        norm = normalizer(sample)
-        norm = norm if preserve_case else norm.lower()
-        normalized.append(norm)
-    return normalized
-
-
-def _evaluate_baseline_tokenizer(tokenizer, samples: Sequence[str], baseline_counts: Sequence[int]) -> Dict[str, float]:
-    total_tokens = 0
-    consistent = 0
-    for sample in samples:
-        encoded = tokenizer.encode(sample)
-        total_tokens += len(encoded.ids)
-        try:
-            decoded = tokenizer.decode(encoded.ids)
-        except Exception:  # pragma: no cover - conservative decode guard
-            decoded = ""
-        if decoded == sample:
-            consistent += 1
-    denom = sum(baseline_counts) or 1
-    return {
-        "round_trip": consistent / len(samples) if samples else 1.0,
-        "compression_ratio": total_tokens / denom,
-        "avg_tokens_per_sample": total_tokens / len(samples) if samples else 0.0,
-    }
-
-
-def _train_baseline(kind: str, samples: Sequence[str], vocab_size: int):
-    from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
-
-    if kind == "bpe":
-        tokenizer = Tokenizer(models.BPE(unk_token="[UNK]"))
-        tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
-        trainer = trainers.BpeTrainer(vocab_size=vocab_size, special_tokens=SPECIAL_TOKENS)
-        tokenizer.train_from_iterator(samples, trainer=trainer)
-        tokenizer.decoder = decoders.BPEDecoder()
-        return tokenizer
-
-    if kind == "wordpiece":
-        tokenizer = Tokenizer(models.WordPiece(unk_token="[UNK]"))
-        tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
-        trainer = trainers.WordPieceTrainer(vocab_size=vocab_size, special_tokens=SPECIAL_TOKENS)
-        tokenizer.train_from_iterator(samples, trainer=trainer)
-        tokenizer.decoder = decoders.WordPiece(prefix="##")
-        return tokenizer
-
-    if kind == "bytebpe":
-        tokenizer = Tokenizer(models.BPE(unk_token="[UNK]"))
-        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()
-        trainer = trainers.BpeTrainer(
-            vocab_size=vocab_size,
-            special_tokens=SPECIAL_TOKENS,
-            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
-        )
-        tokenizer.train_from_iterator(samples, trainer=trainer)
-        tokenizer.decoder = decoders.ByteLevel()
-        return tokenizer
-
-    raise ValueError(f"Unknown baseline tokenizer: {kind}")
-
-
-def run_experiment(
-    domain: str,
-    samples: Sequence[str],
-    recipe: DomainRecipe,
-    output_dir: Optional[Path],
-    baselines: Sequence[str],
-) -> Dict[str, object]:
-    train_samples, eval_samples = _split_samples(samples, eval_ratio=0.2, seed=13)
-    if not train_samples or not eval_samples:
-        raise ValueError("Insufficient samples for experiment. Provide more data.")
-
-    normalized_train = _normalize_samples(train_samples, recipe.normalizer, recipe.preserve_case)
-    normalized_eval = _normalize_samples(eval_samples, recipe.normalizer, recipe.preserve_case)
-    baseline_counts = [_baseline_token_count(text) for text in normalized_eval]
-
-    config = CandidateExtractorConfig(
-        max_vocab=recipe.vocab_size,
-        grammar_patterns=recipe.grammar_patterns,
-        preserve_case=recipe.preserve_case,
-        special_tokens=SPECIAL_TOKENS,
-        weights=ScoreWeights(),
+    patterns = DOMAIN_PATTERNS.get(args.domain, []) or None
+    tokenizer = DSTTokenizer.train(
+        corpus,
+        min_freq=args.min_freq,
+        max_vocab=args.max_vocab,
+        patterns=patterns,
     )
 
-    tokenizer = build_dst_tokenizer(
-        corpus=train_samples,
-        normalizer=recipe.normalizer,
-        config=config,
-        save_dir=str(output_dir / domain) if output_dir else None,
-    )
+    # Metrics for DST
+    avg_toks = tokens_per_sequence(tokenizer, corpus)
+    comp_vs_chars = compression_ratio_vs_chars(tokenizer, corpus)
+    rt_acc = round_trip_accuracy(tokenizer, corpus)
+    thr = throughput(tokenizer, corpus, trials=args.trials, warmup=args.warmup)
 
-    dst_results = {
-        "round_trip": round_trip_accuracy(tokenizer, eval_samples),
-        "compression_ratio": compression_ratio(tokenizer, eval_samples),
-        "avg_token_length": average_token_length(tokenizer),
+    results = {
+        "domain": args.domain,
+        "num_samples": len(corpus),
+        "dst": {
+            "avg_tokens_per_seq": avg_toks,
+            "compression_ratio_vs_chars": comp_vs_chars,
+            "round_trip_accuracy": rt_acc,
+            "throughput": thr,
+        },
+        "baselines": {},
+        "config": {
+            "min_freq": args.min_freq,
+            "max_vocab": args.max_vocab,
+            "patterns": patterns,
+        },
     }
 
-    baseline_results: Dict[str, Dict[str, float]] = {}
-    if baselines:
-        for kind in baselines:
-            baseline_tokenizer = _train_baseline(kind, normalized_train, vocab_size=recipe.vocab_size)
-            baseline_results[kind] = _evaluate_baseline_tokenizer(
-                baseline_tokenizer,
-                normalized_eval,
-                baseline_counts,
-            )
+    # Baselines
+    if not args.no_baselines:
+        byte_tok = ByteTokenizer()
+        ws_tok = WhitespaceTokenizer()
+        results["baselines"] = {
+            "byte": {
+                "avg_tokens_per_seq": avg_tokens_baseline(byte_tok, corpus),
+                "invertible": True,
+            },
+            "whitespace": {
+                "avg_tokens_per_seq": avg_tokens_baseline(ws_tok, corpus),
+                "invertible": False,
+            },
+        }
 
-    results: Dict[str, object] = {
-        "domain": domain,
-        "num_train_samples": len(train_samples),
-        "num_eval_samples": len(eval_samples),
-        "dst": dst_results,
-        "baselines": baseline_results,
-        "description": recipe.description,
-    }
-
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        with (output_dir / f"{domain}_results.json").open("w", encoding="utf-8") as handle:
-            json.dump(results, handle, indent=2)
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
 
     return results
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run DST experiments across structured domains.")
-    parser.add_argument("--domain", required=True, choices=DOMAIN_RECIPES.keys(), help="Domain key to evaluate.")
-    parser.add_argument(
-        "--dataset",
-        help="Hugging Face dataset spec in the form 'name[:config]/split'. Example: 'bigcode/the-stack:python/train'.",
+    parser = argparse.ArgumentParser(
+        description="Reproduce DST experimental metrics on a provided corpus with domain patterns."
     )
+    parser.add_argument("--corpus", type=Path, required=True, help="Path to input corpus (.txt or .jsonl)")
     parser.add_argument(
-        "--corpus",
-        type=Path,
-        help="Local corpus path (.txt or .jsonl) containing one record per line.",
+        "--domain",
+        choices=list(DOMAIN_PATTERNS.keys()),
+        default="generic",
+        help="Domain profile controlling regex patterns.",
     )
-    parser.add_argument("--text-field", default="text", help="Field name for datasets with structured records.")
-    parser.add_argument("--limit", type=int, default=20000, help="Maximum number of samples to load.")
-    parser.add_argument(
-        "--no-baselines",
-        action="store_true",
-        help="Skip training baseline tokenizers (BPE, WordPiece, Byte-BPE).",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Directory to store tokenizer artifacts and JSON summaries.",
-    )
+    parser.add_argument("--min-freq", type=int, default=5, help="Minimum frequency for candidate tokens")
+    parser.add_argument("--max-vocab", type=int, default=32000, help="Maximum vocabulary size")
+    parser.add_argument("--limit", type=int, default=0, help="Limit number of samples (0 = no limit)")
+    parser.add_argument("--trials", type=int, default=1, help="Trials for throughput measurement")
+    parser.add_argument("--warmup", type=int, default=0, help="Warmup runs before timing")
+    parser.add_argument("--no-baselines", action="store_true", help="Skip baseline measurements")
+    parser.add_argument("--output", type=Path, help="Write results JSON to this path")
 
     args = parser.parse_args()
-
-    recipe = DOMAIN_RECIPES[args.domain]
-    samples: List[str]
-
-    if args.dataset:
-        if "/" not in args.dataset:
-            raise ValueError("Dataset spec must include a split, e.g. 'dataset/train'.")
-        name_part, split = args.dataset.split("/", maxsplit=1)
-        if ":" in name_part:
-            name, config = name_part.split(":", maxsplit=1)
-            dataset_name = name
-            dataset_kwargs = {"name": config}
-        else:
-            dataset_name = name_part
-            dataset_kwargs = {}
-        samples = _load_hf_samples(
-            name=dataset_name,
-            split=split,
-            text_field=args.text_field,
-            limit=args.limit,
-            streaming=False,
-            **dataset_kwargs,
-        )
-    elif args.corpus:
-        samples = _load_local_samples(args.corpus, limit=args.limit)
-    else:
-        raise ValueError("Provide either --dataset or --corpus to supply experimental data.")
-
-    if not samples:
-        raise ValueError("Loaded corpus is empty. Check dataset spec and text field.")
-
-    baselines = [] if args.no_baselines else ["bpe", "wordpiece", "bytebpe"]
-    results = run_experiment(
-        domain=args.domain,
-        samples=samples,
-        recipe=recipe,
-        output_dir=args.output_dir,
-        baselines=baselines,
-    )
-
-    print(json.dumps(results, indent=2))
+    results = run(args)
+    print(json.dumps(results, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     main()
+
