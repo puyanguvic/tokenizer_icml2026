@@ -5,7 +5,12 @@ description = "A deterministic, grammar-guided, and reversible tokenizer framewo
 authors = [{ name = "Pu Yang", email = "puyang@uvic.ca" }]
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "requests>=2.31",
+    "tqdm>=4.66",
+    "warcio>=1.7",
+    "dpkt>=1.9",
+]
 
 [project.scripts]
 dst = "dst.cli:main"

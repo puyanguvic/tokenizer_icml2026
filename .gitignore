@@ -12,7 +12,9 @@ venv/
 env/
 
 # dataset
-data_waf/
+data_waf/*
+!data_waf/*.py
+datasets/
 # Packaging / build
 build/
 dist/

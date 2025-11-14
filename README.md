@@ -56,7 +56,7 @@ assert tokenizer.verify(corpus)
 ### 4️⃣ Save / Load Tokenizer
 
 ```python
-from dst.tokenizer import DSTTokenizer
+from src.tokenizer import DSTTokenizer
 
 # After training
 tokenizer.save_json("tokenizer.json")
@@ -77,8 +77,10 @@ assert tokenizer2.verify(corpus)
 | `dst/dfst.py`                 | Deterministic finite-state transducer (DFST) encoder–decoder.                |
 | `dst/tokenizer.py`            | Main training / encoding / export interface.                                 |
 | `dst/cli.py`                  | Command-line interface (`dst train`, `dst encode`).                          |
+| `data_waf/prepare_http_corpus.py` | Builders for Common Crawl + CIC-IDS HTTP corpora exported to JSONL.         |
 | `examples/sample_corpus.txt`  | Example HTTP corpus.                                                         |
 | `tests/test_reversibility.py` | Unit test ensuring κ(τ(x)) = x for all inputs.                               |
+| `tests/test_prepare_http_corpus.py` | Unit tests for HTTP corpus preparation helpers.                          |
 
 ---
 
@@ -124,6 +126,79 @@ dst encode --input examples/sample_corpus.txt --tokenizer tokenizer.json --forma
 Notes:
 - `--format plain` prints space-separated tokens per input line.
 - `--format json` prints one JSON array per input line (JSON Lines).
+
+---
+
+## 🌐 Building HTTP Corpora (Common Crawl + CIC-IDS)
+
+To train a tokenizer for an application firewall, combine benign HTTP traffic from Common Crawl with malicious flows from the CIC-IDS datasets. The helper script `data_waf/prepare_http_corpus.py` turns raw archives into structured JSONL where each row contains:
+
+```json
+{
+  "source": "commoncrawl",
+  "method": "GET",
+  "uri": "/index.html",
+  "url": "http://example.com/index.html",
+  "protocol": "HTTP/1.1",
+  "headers": {"Host": "example.com", "...": "..."},
+  "body": "",
+  "text": "GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n",
+  "... metadata ..."
+}
+```
+
+Because the JSONL includes a `text` field, `dst train` can ingest it directly.
+
+### Common Crawl request archives
+
+1. Download one or more `CC-MAIN-*-requests.warc.gz` files (each ~15 GB compressed).  
+   Example source: `s3://commoncrawl/crawl-data/CC-MAIN-2024-10/segments/*/warc/CC-MAIN-*-requests.warc.gz`.
+2. Convert them to JSONL:
+
+```bash
+python -m data_waf.prepare_http_corpus commoncrawl \
+  /data/commoncrawl/CC-MAIN-2024-10-requests.warc.gz \
+  --out datasets/http_corpus/commoncrawl_requests.jsonl \
+  --max-body-bytes 4096 --progress --limit 500000
+```
+
+### CIC-IDS PCAP captures
+
+1. Download the relevant CIC-IDS PCAP files (e.g. the Web Attack days from CIC-IDS-2017 or CSE-CIC-IDS-2018).  
+2. Extract the HTTP requests:
+
+```bash
+python -m data_waf.prepare_http_corpus cicids \
+  /data/cicids/Friday-WorkingHours.pcap \
+  /data/cicids/Wednesday-WebAttacks.pcap \
+  --out datasets/http_corpus/cicids_webattacks.jsonl \
+  --ports 80 8080 8000 --progress
+```
+
+The parser reassembles TCP streams, keeps request bodies up to `--max-body-bytes`, and records client/server IPs for downstream labelling.
+
+### Merging corpora for tokenizer training
+
+Append JSONL files to build a single corpus:
+
+```bash
+python -m data_waf.prepare_http_corpus commoncrawl \
+  /data/commoncrawl/*.warc.gz \
+  --out datasets/http_corpus/waf_corpus.jsonl
+
+python -m data_waf.prepare_http_corpus cicids \
+  /data/cicids/*.pcap \
+  --out datasets/http_corpus/waf_corpus.jsonl \
+  --append
+```
+
+Then train the tokenizer:
+
+```bash
+dst train --input datasets/http_corpus/waf_corpus.jsonl --output waf_tokenizer.json
+```
+
+To focus on malicious requests during evaluation, filter by the metadata fields (`source == "cicids"`, IP ranges, etc.) before scoring.
 
 ---
 
