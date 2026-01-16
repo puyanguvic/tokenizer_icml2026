@@ -1,0 +1,5 @@
+name: unigram
+type: unigram
+vocab_size: 16000
+library: sentencepiece
+normalization: none

@@ -1,16 +1,50 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "domain-specific-tokenization"
+name = "ctok"
 version = "0.1.0"
 description = "A deterministic, grammar-guided, and reversible tokenizer framework."
 authors = [{ name = "Pu Yang", email = "puyang@uvic.ca" }]
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 dependencies = [
     "requests>=2.31",
     "tqdm>=4.66",
     "warcio>=1.7",
     "dpkt>=1.9",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.8",
+    "pytest>=7.4",
+    "ruff>=0.5.6",
+    "types-requests>=2.31.0.1",
+]
+hf = [
+    "datasets>=2.18",
+]
+transformers = [
+    "transformers>=4.40",
 ]
 
 [project.scripts]
-dst = "dst.cli:main"
+ctok = "ctok.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"

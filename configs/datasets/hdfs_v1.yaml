@@ -1,0 +1,12 @@
+name: hdfs_v1
+task: sequence_anomaly
+input_type: sequence
+format: hf
+hf_dataset: honicky/hdfs-logs-encoded-blocks
+hf_split: train
+text_field: event_encoded
+label_field: label
+group_field: block_id
+label_mapping:
+  Normal: 0
+  Anomaly: 1

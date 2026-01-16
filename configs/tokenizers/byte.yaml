@@ -1,0 +1,5 @@
+name: byte
+type: byte
+vocab_size: 256
+library: byte
+normalization: none

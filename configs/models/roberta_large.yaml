@@ -1,0 +1,5 @@
+name: roberta_large
+family: transformer
+hf_id: roberta-large
+num_layers: 24
+hidden_size: 1024
