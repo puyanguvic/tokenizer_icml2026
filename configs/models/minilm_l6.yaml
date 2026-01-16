@@ -1,0 +1,5 @@
+name: minilm_l6
+family: transformer
+hf_id: microsoft/MiniLM-L6-H384-uncased
+num_layers: 6
+hidden_size: 384

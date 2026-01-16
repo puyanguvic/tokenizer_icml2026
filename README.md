@@ -1,301 +1,85 @@
-# Domain-Specific Tokenization (DST)
+# Controlled Tokenization (ctok)
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]()
-[![Reproducible](https://img.shields.io/badge/reproducible-✓-green.svg)]()
+Controlled Tokenization (ctok) is a deterministic, grammar-guided tokenizer system for
+structured and semi-structured detection workloads. The repository provides a clean
+runtime tokenizer, a configurable vocabulary induction pipeline, and scaffolding for
+experiments and diagnostics aligned with the paper.
 
-> A deterministic, grammar-guided tokenizer system for structured data — 100 % reversible, linear-time, and drop-in compatible with Transformers.
-
----
-
-## ✨ Overview
-
-**Domain-Specific Tokenization (DST)** provides a *formal, efficient, and invertible* framework for encoding structured data such as HTTP logs, configuration files, source code, or biosequences.
-
-It guarantees:
-- ✅ **Perfect round-trip fidelity** – every input string can be exactly reconstructed.
-- ⚙️ **Deterministic finite-state encoding** – compiled into DFSTs with $O(|x|)$ complexity.
-- 🧩 **Grammar-aware vocabularies** – guided by domain regular expressions and schemas.
-- 🤝 **Hugging Face compatibility** – exports `tokenizer.json` for existing Transformer stacks.
-
----
-
-## 🚀 Quick Start
-
-### 1️⃣ Install
-```bash
-git clone git@github.com:puyanguvic/Domain-Specific-Tokenization.git
-cd Domain-Specific-Tokenization
-pip install -e .
-````
-
-### 2️⃣ Train a tokenizer
+## Quickstart
 
 ```bash
-dst train --input examples/sample_corpus.txt --output tokenizer.json
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev,hf]"
+
+ctok build --corpus data/raw/example.txt --output artifacts/tokenizers/ctok_v1 --config configs/tokenizers/ctok.yaml
+ctok encode --artifact artifacts/tokenizers/ctok_v1 --input data/raw/example.txt --format ids
+ctok eval --artifact artifacts/tokenizers/ctok_v1 --corpus data/raw/example.txt
 ```
 
-### 3️⃣ Encode / Decode in Python
+Optional: add a label-aligned file to enable the label-entropy distortion proxy:
+
+```bash
+ctok build --corpus data/raw/example.txt --labels data/raw/example.labels \
+  --output artifacts/tokenizers/ctok_v1 --config configs/tokenizers/ctok.yaml
+```
+
+For boundary-respecting candidates (boundary-healing baseline), add:
+
+```bash
+ctok build --corpus data/raw/example.txt --output artifacts/tokenizers/ctok_v1 \
+  --config configs/tokenizers/ctok.yaml --boundary-aware
+```
+
+### Python usage
 
 ```python
-from dst.tokenizer import DSTTokenizer
+from ctok.tokenization import CtokTokenizer
 
-corpus = ["GET /index.html HTTP/1.1", "Host: example.com"]
-tokenizer = DSTTokenizer.train(corpus, min_freq=1)
-
-tokens = tokenizer.encode("GET /index.html HTTP/1.1")
-print(tokens)
-# ['GET', ' ', '/', 'index', '.', 'html', ' ', 'HTTP', '/', '1', '.', '1']
-
-print(tokenizer.decode(tokens))
-# "GET /index.html HTTP/1.1"
-
-assert tokenizer.verify(corpus)
+tokenizer = CtokTokenizer.from_pretrained("artifacts/tokenizers/ctok_v1")
+batch = tokenizer(["GET /", "POST /admin"], padding=True, truncation=True, max_length=128)
+print(batch["input_ids"])
 ```
 
-### 4️⃣ Save / Load Tokenizer
+### Transformers integration
+
+Install the optional dependency:
+
+```bash
+pip install -e ".[transformers]"
+```
 
 ```python
-from src.tokenizer import DSTTokenizer
+from ctok.tokenization.hf import CtokHFTokenizer
 
-# After training
-tokenizer.save_json("tokenizer.json")
-
-# Reconstruct later (builds DFST from saved vocab)
-tokenizer2 = DSTTokenizer.load_json("tokenizer.json")
-
-assert tokenizer2.verify(corpus)
+hf_tokenizer = CtokHFTokenizer.from_pretrained("artifacts/tokenizers/ctok_v1")
 ```
 
----
-
-## 📂 Repository Structure
-
-| Path                          | Description                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------- |
-| `dst/vocab.py`                | Grammar-guided vocabulary induction (regex extraction, frequency filtering). |
-| `dst/dfst.py`                 | Deterministic finite-state transducer (DFST) encoder–decoder.                |
-| `dst/tokenizer.py`            | Main training / encoding / export interface.                                 |
-| `dst/cli.py`                  | Command-line interface (`dst train`, `dst encode`).                          |
-| `data_waf/prepare_http_corpus.py` | Builders for Common Crawl + CIC-IDS HTTP corpora exported to JSONL.         |
-| `examples/sample_corpus.txt`  | Example HTTP corpus.                                                         |
-| `tests/test_reversibility.py` | Unit test ensuring κ(τ(x)) = x for all inputs.                               |
-| `tests/test_prepare_http_corpus.py` | Unit tests for HTTP corpus preparation helpers.                          |
-
----
-
-## ⚙️ Command-Line Interface
+### Fine-tuning RoBERTa
 
 ```bash
-usage: dst <command> [options]
-
-Commands:
-  train     Train a deterministic tokenizer from a text corpus
-  encode    Encode text using a trained tokenizer
-
-train options:
-  --input PATH            Path to training corpus (one line per sample)
-  --output PATH           Output tokenizer JSON (default: dst_tokenizer.json)
-  --min-freq INT          Minimum frequency for candidate tokens (default: 5)
-  --max-vocab INT         Maximum vocabulary size (default: 32000)
-
-encode options:
-  --input PATH            Path to text file to encode (line by line)
-  --tokenizer PATH        Tokenizer JSON path (default: dst_tokenizer.json)
-  --format {plain,json}   Output format (default: plain)
+pip install -e ".[transformers,hf]"
+python scripts/finetune_roberta.py \
+  --dataset-config configs/datasets/waf_http.yaml \
+  --model-config configs/models/roberta_base.yaml \
+  --tokenizer artifacts/tokenizers/ctok_v1 \
+  --output results/runs/roberta_waf_http
 ```
 
-Examples:
+## Layout
 
-```bash
-# Train tokenizer (defaults)
-dst train --input examples/sample_corpus.txt --output tokenizer.json
+- `src/ctok/`: core package (tokenization runtime, induction, probes, diagnostics).
+- `configs/`: configuration files for datasets, tokenizers, models, and experiments.
+- `scripts/`: one-off helper scripts (data prep, export, end-to-end runs).
+- `docs/`: project documentation and paper-facing notes.
+- `artifacts/`, `results/`, `data/`: generated outputs (gitignored except README files).
 
-# Train with custom vocabulary constraints
-dst train --input examples/sample_corpus.txt \
-         --output tokenizer.json \
-         --min-freq 1 --max-vocab 4096
+## Notes
 
-# Encode a text file (space-separated tokens per line)
-dst encode --input examples/sample_corpus.txt --tokenizer tokenizer.json
-
-# Encode as JSON (one JSON array per line)
-dst encode --input examples/sample_corpus.txt --tokenizer tokenizer.json --format json
-```
-
-Notes:
-- `--format plain` prints space-separated tokens per input line.
-- `--format json` prints one JSON array per input line (JSON Lines).
-
----
-
-## 🌐 Building HTTP Corpora (Common Crawl + CIC-IDS)
-
-To train a tokenizer for an application firewall, combine benign HTTP traffic from Common Crawl with malicious flows from the CIC-IDS datasets. The helper script `data_waf/prepare_http_corpus.py` turns raw archives into structured JSONL where each row contains:
-
-```json
-{
-  "source": "commoncrawl",
-  "method": "GET",
-  "uri": "/index.html",
-  "url": "http://example.com/index.html",
-  "protocol": "HTTP/1.1",
-  "headers": {"Host": "example.com", "...": "..."},
-  "body": "",
-  "text": "GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n",
-  "... metadata ..."
-}
-```
-
-Because the JSONL includes a `text` field, `dst train` can ingest it directly.
-
-### Common Crawl request archives
-
-1. Download one or more `CC-MAIN-*-requests.warc.gz` files (each ~15 GB compressed).  
-   Example source: `s3://commoncrawl/crawl-data/CC-MAIN-2024-10/segments/*/warc/CC-MAIN-*-requests.warc.gz`.
-2. Convert them to JSONL:
-
-```bash
-python -m data_waf.prepare_http_corpus commoncrawl \
-  /data/commoncrawl/CC-MAIN-2024-10-requests.warc.gz \
-  --out datasets/http_corpus/commoncrawl_requests.jsonl \
-  --max-body-bytes 4096 --progress --limit 500000
-```
-
-### CIC-IDS PCAP captures
-
-1. Download the relevant CIC-IDS PCAP files (e.g. the Web Attack days from CIC-IDS-2017 or CSE-CIC-IDS-2018).  
-2. Extract the HTTP requests:
-
-```bash
-python -m data_waf.prepare_http_corpus cicids \
-  /data/cicids/Friday-WorkingHours.pcap \
-  /data/cicids/Wednesday-WebAttacks.pcap \
-  --out datasets/http_corpus/cicids_webattacks.jsonl \
-  --ports 80 8080 8000 --progress
-```
-
-The parser reassembles TCP streams, keeps request bodies up to `--max-body-bytes`, and records client/server IPs for downstream labelling.
-
-### Merging corpora for tokenizer training
-
-Append JSONL files to build a single corpus:
-
-```bash
-python -m data_waf.prepare_http_corpus commoncrawl \
-  /data/commoncrawl/*.warc.gz \
-  --out datasets/http_corpus/waf_corpus.jsonl
-
-python -m data_waf.prepare_http_corpus cicids \
-  /data/cicids/*.pcap \
-  --out datasets/http_corpus/waf_corpus.jsonl \
-  --append
-```
-
-Then train the tokenizer:
-
-```bash
-dst train --input datasets/http_corpus/waf_corpus.jsonl --output waf_tokenizer.json
-```
-
-To focus on malicious requests during evaluation, filter by the metadata fields (`source == "cicids"`, IP ranges, etc.) before scoring.
-
----
-
-## 🧪 Testing
-
-Run the unit tests to verify reversibility on the sample corpus:
-
-```bash
-python3 -m pytest -q
-```
-
----
-
-## 🧠 Design Highlights
-
-DST models tokenization as paired mappings between strings and token sequences:
-[
-\tau: \Sigma^* \to \mathcal{V}^*, \quad \kappa: \mathcal{V}^* \to \Sigma^*, \quad \kappa(\tau(x)) = x
-]
-
-It ensures:
-
-* **Non-erasingness:** every token emits ≥ 1 symbol.
-* **Prefix-freeness:** unique segmentation, no ambiguity.
-* **Bounded preimage:** finite inverse mappings ⇒ linear-time DFST.
-
-The compiled automaton performs deterministic, auditable transformations suitable for large-scale enterprise or scientific data processing.
-
----
-
-## 🧪 Example Performance
-
-| Property           | Value                                      |   |   |
-| ------------------ | ------------------------------------------ | - | - |
-| Reversibility      | ✅ 100 %                                    |   |   |
-| Avg Token Length   | ≈ 4.2 chars                                |   |   |
-| Sequence Reduction | 10–20 % vs Byte-BPE                        |   |   |
-| Complexity         | O(                                         | x | ) |
-| Export             | `tokenizer.json` (Hugging Face-compatible) |   |   |
-
----
-
-## 📜 License
-
-Released under the **MIT License**
-© 2025 Pu Yang
-
----
-
-## 🔗 Related Work
-
-* Sennrich et al., *Neural Machine Translation of Rare Words with Subword Units*, ACL 2016
-* Xue et al., *ByT5: Towards a Token-Free Future with Byte-Level Models*, TACL 2022
-* Ding et al., *Byte-Level Tradeoffs in Tokenization*, NeurIPS 2023
-
----
-
-## 🧪 Experiments
-
-This repo includes a simple, self-contained experiments runner that follows the evaluation design in the paper:
-
-- Measures average tokens per sequence, compression ratio vs. characters, exact round-trip accuracy, and encoding throughput.
-- Supports domain profiles (protocol, config, code, bio) via grammar patterns.
-- Includes local baselines without external dependencies: byte-level and whitespace.
-
-Prepare a corpus file with one sample per line (e.g., `examples/sample_corpus.txt`).
-
-Examples:
-
-```bash
-# Generic profile on the sample corpus
-python3 -m experiments.run_experiments \
-  --corpus examples/sample_corpus.txt \
-  --domain generic \
-  --min-freq 1 --max-vocab 4096 \
-  --trials 3 --warmup 1 \
-  --output experiments/results_generic.json
-
-# Protocol (HTTP) profile
-python3 -m experiments.run_experiments \
-  --corpus examples/sample_corpus.txt \
-  --domain protocol \
-  --min-freq 1 --max-vocab 4096 \
-  --trials 3 --warmup 1
-
-# Config profile on a local YAML/JSON lines corpus
-python3 -m experiments.run_experiments \
-  --corpus /path/to/config.jsonl \
-  --domain config \
-  --limit 50000 \
-  --max-vocab 24000 \
-  --trials 5 --warmup 1 \
-  --output experiments/results_config.json
-```
-
-Notes:
-- Input formats: `.txt`/`.log` (one line per sample) or `.jsonl` with a `text`/`content`/`value` field.
-- Baselines: byte-level is perfectly invertible; whitespace is not (expected to fail round-trip if tested).
-- Throughput numbers are CPU timing of the Python DFST; production systems can export DFST tables to native runtimes for higher throughput.
-- Ablations: use `--domain generic` to disable grammar priors; sweep `--max-vocab` to study vocabulary-size effects.
+The current implementation focuses on deterministic runtime tokenization and a
+reference induction loop that follows the gain--distortion structure in the paper.
+Specialized probes, diagnostics, and model wrappers are stubbed for extension.
+See `docs/experiments.md` for the experiment plan and config templates.
+Hugging Face datasets are configured via `configs/datasets/*.yaml` using `hf_dataset`.
+Model templates include DistilRoBERTa, RoBERTa-base, and RoBERTa-large configs.
+Experiments are intended to run a dataset x model-size matrix across these three sizes.

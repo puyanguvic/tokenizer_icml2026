@@ -1,0 +1,5 @@
+name: distilroberta
+family: transformer
+hf_id: distilroberta-base
+num_layers: 6
+hidden_size: 768

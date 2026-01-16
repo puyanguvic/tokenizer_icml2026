@@ -1,0 +1,7 @@
+name: boundary_heal
+type: boundary_heal
+vocab_size: 16000
+base_tokenizer: bpe
+heal_window: 4
+max_rescan: 8
+boundary_mode: aware

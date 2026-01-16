@@ -1,0 +1,11 @@
+name: phishing_html
+task: binary_classification
+input_type: document
+format: hf
+hf_dataset: puyang2025/phish_html
+hf_split: train
+text_field: text
+label_field: label
+label_mapping:
+  benign: 0
+  malicious: 1
