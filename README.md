@@ -26,8 +26,9 @@ If you want a different venv path or extras:
 
 ```bash
 VENV_DIR=/tmp/ctok-venv ./setup.sh
-./setup.sh --extras dev,hf,transformers
+./setup.sh --extras hf,transformers
 ./setup.sh --no-extras
+./setup.sh --no-dev
 ```
 
 ### Build and run
@@ -67,7 +68,7 @@ print(batch["input_ids"])
 Install the optional dependency:
 
 ```bash
-pip install -e ".[transformers]"
+uv sync --extra transformers
 ```
 
 ```python
@@ -79,7 +80,7 @@ hf_tokenizer = CtokHFTokenizer.from_pretrained("artifacts/tokenizers/ctok_v1")
 ### Fine-tuning RoBERTa
 
 ```bash
-pip install -e ".[transformers,hf]"
+uv sync --extra transformers --extra hf
 ctok train --task waf_http --model roberta_base --tokenizer ctok_v1 \
   --output results/runs/roberta_waf_http
 ```

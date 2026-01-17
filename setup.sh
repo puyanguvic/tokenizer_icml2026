@@ -5,7 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 VENV_DIR="${VENV_DIR:-$ROOT_DIR/.venv}"
-EXTRAS="${EXTRAS:-dev,hf}"
+EXTRAS="${EXTRAS:-hf}"
+NO_DEV="${NO_DEV:-0}"
 CTOK_DEFAULT_TASK="${CTOK_DEFAULT_TASK:-waf_http}"
 CTOK_DEFAULT_MODEL="${CTOK_DEFAULT_MODEL:-roberta_base}"
 CTOK_DEFAULT_TOKENIZER="${CTOK_DEFAULT_TOKENIZER:-ctok_v1}"
@@ -16,13 +17,13 @@ CTOK_ENV_FILE="${CTOK_ENV_FILE:-$ROOT_DIR/.ctok_env}"
 
 usage() {
   cat <<'EOF'
-Usage: ./setup.sh [--extras <list>] [--no-extras]
+Usage: ./setup.sh [--extras <list>] [--no-extras] [--no-dev]
 
-Creates a .venv with uv and installs the project in editable mode.
+Creates a virtual environment with uv and syncs dependencies from pyproject.toml.
 Examples:
   ./setup.sh
-  ./setup.sh --extras dev,hf,transformers
-  EXTRAS=dev,hf ./setup.sh
+  ./setup.sh --extras hf,transformers
+  EXTRAS=hf ./setup.sh
   VENV_DIR=/tmp/ctok-venv ./setup.sh
 EOF
 }
@@ -39,6 +40,10 @@ while [ $# -gt 0 ]; do
       ;;
     --no-extras)
       EXTRAS=""
+      shift
+      ;;
+    --no-dev)
+      NO_DEV=1
       shift
       ;;
     -h|--help)
@@ -60,12 +65,21 @@ fi
 
 uv venv "$VENV_DIR"
 
-INSTALL_TARGET="."
+SYNC_ARGS=()
+if [ "$NO_DEV" -eq 1 ]; then
+  SYNC_ARGS+=(--no-dev)
+fi
 if [ -n "$EXTRAS" ]; then
-  INSTALL_TARGET=".[${EXTRAS}]"
+  IFS=',' read -r -a extra_list <<<"$EXTRAS"
+  for extra in "${extra_list[@]}"; do
+    extra="${extra//[[:space:]]/}"
+    if [ -n "$extra" ]; then
+      SYNC_ARGS+=(--extra "$extra")
+    fi
+  done
 fi
 
-uv pip install --python "$VENV_DIR/bin/python" -e "$INSTALL_TARGET"
+VIRTUAL_ENV="$VENV_DIR" PATH="$VENV_DIR/bin:$PATH" uv sync --active "${SYNC_ARGS[@]}"
 
 if [ -n "$CTOK_ENV_FILE" ]; then
   cat > "$CTOK_ENV_FILE" <<EOF
