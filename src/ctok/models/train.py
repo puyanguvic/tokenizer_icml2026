@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import importlib.util
 import inspect
 import math
 from pathlib import Path
@@ -11,7 +12,6 @@ from typing import Any
 from ctok.datasets.config import DatasetConfig
 from ctok.datasets.io import load_dataset as load_local_dataset
 from ctok.models.encoders import load_roberta_classifier
-from ctok.tokenization.hf import CtokHFTokenizer
 
 
 def train_roberta(
@@ -31,6 +31,7 @@ def train_roberta(
 ) -> dict[str, Any]:
     datasets = _require_datasets()
     transformers = _require_transformers()
+    from ctok.tokenization.hf import CtokHFTokenizer
 
     tokenizer = CtokHFTokenizer.from_pretrained(tokenizer_path)
 
@@ -111,6 +112,8 @@ def _require_datasets() -> Any:
 
 
 def _require_transformers() -> Any:
+    if importlib.util.find_spec("torch") is None:
+        raise ImportError("Install 'torch' to run training.")
     try:
         import transformers  # type: ignore
     except ImportError as exc:

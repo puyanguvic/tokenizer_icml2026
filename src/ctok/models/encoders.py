@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 
 
@@ -12,6 +13,8 @@ def load_roberta_classifier(
     label2id: dict[str, int] | None = None,
     **kwargs: Any,
 ) -> Any:
+    if importlib.util.find_spec("torch") is None:
+        raise ImportError("Install 'torch' to load RoBERTa models.")
     try:
         from transformers import AutoConfig, AutoModelForSequenceClassification
     except ImportError as exc:

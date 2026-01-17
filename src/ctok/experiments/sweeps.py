@@ -476,7 +476,7 @@ def _estimate_prefix_log_loss(
     x_train = vectorizer.transform(train_x)
     x_eval = vectorizer.transform(eval_x)
 
-    clf = LogisticRegression(max_iter=1000, n_jobs=1)
+    clf = LogisticRegression(max_iter=1000)
     clf.fit(x_train, train_y)
     probs = clf.predict_proba(x_eval)
     return float(log_loss(eval_y, probs, labels=clf.classes_))
@@ -525,7 +525,7 @@ def _probe_full_sequence_metric(
     x_train = vectorizer.transform(train_x)
     x_eval = vectorizer.transform(eval_x)
 
-    clf = LogisticRegression(max_iter=1000, n_jobs=1)
+    clf = LogisticRegression(max_iter=1000)
     clf.fit(x_train, train_y)
 
     preds = clf.predict(x_eval)
