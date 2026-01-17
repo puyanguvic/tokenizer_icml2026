@@ -19,17 +19,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "mypy>=1.8",
-    "pytest>=7.4",
-    "ruff>=0.5.6",
-    "types-requests>=2.31.0.1",
-]
 hf = [
     "datasets>=2.18",
 ]
 transformers = [
     "transformers>=4.40",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.8",
+    "pytest>=7.4",
+    "ruff>=0.5.6",
+    "types-requests>=2.31.0.1",
 ]
 
 [project.scripts]

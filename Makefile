@@ -1,16 +1,16 @@
 .PHONY: lint format test typecheck bench
 
 lint:
-	ruff check src tests
+	uv run ruff check src tests
 
 format:
-	ruff format src tests
+	uv run ruff format src tests
 
 test:
-	pytest
+	uv run pytest
 
 typecheck:
-	mypy src
+	uv run mypy src
 
 bench:
-	python -m ctok.cli.main bench --help
+	uv run python -m ctok.cli.main bench --help
