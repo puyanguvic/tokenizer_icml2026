@@ -8,8 +8,8 @@ from pathlib import Path
 
 import yaml
 
-from ctok.datasets.config import DatasetConfig
-from ctok.models.train import train_roberta
+from ctok_extras.datasets.config import DatasetConfig
+from ctok_extras.models.train import train_roberta
 
 
 def _load_dataset_config(path: Path) -> DatasetConfig:

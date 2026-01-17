@@ -3,18 +3,14 @@ requires = ["setuptools>=67", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ctok"
+name = "ctok-core"
 version = "0.1.0"
-description = "A deterministic, grammar-guided, and reversible tokenizer framework."
+description = "Core deterministic, grammar-guided, and reversible tokenizer framework."
 authors = [{ name = "Pu Yang", email = "puyang@uvic.ca" }]
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
-    "requests>=2.31",
-    "tqdm>=4.66",
-    "warcio>=1.7",
-    "dpkt>=1.9",
     "pyyaml>=6.0",
 ]
 
@@ -45,9 +41,6 @@ dev = [
     "ruff>=0.5.6",
     "types-requests>=2.31.0.1",
 ]
-
-[project.scripts]
-ctok = "ctok.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

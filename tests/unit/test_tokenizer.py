@@ -1,5 +1,5 @@
-from ctok.tokenization.tokenizer import CtokTokenizer
-from ctok.tokenization.vocab import Vocabulary
+from ctok_core.tokenization.tokenizer import CtokTokenizer
+from ctok_core.tokenization.vocab import Vocabulary
 
 
 def test_encode_decode_roundtrip():

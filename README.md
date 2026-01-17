@@ -1,6 +1,6 @@
-# Controlled Tokenization (ctok)
+# Controlled Tokenization Core (ctok-core)
 
-Controlled Tokenization (ctok) is a deterministic, grammar-guided tokenizer system for
+Controlled Tokenization (ctok-core) is a deterministic, grammar-guided tokenizer system for
 structured and semi-structured detection workloads. The repository provides a clean
 runtime tokenizer, a configurable vocabulary induction pipeline, and scaffolding for
 experiments and diagnostics aligned with the paper.
@@ -20,7 +20,7 @@ source .venv/bin/activate
 source .ctok_env
 ```
 
-`setup.sh` writes `.ctok_env` with default task/model/tokenizer values for `ctok train`.
+`setup.sh` writes `.ctok_env` with default task/model/tokenizer values for the training CLI.
 
 If you want a different venv path or extras:
 
@@ -34,29 +34,32 @@ VENV_DIR=/tmp/ctok-venv ./setup.sh
 ### Build and run
 
 ```bash
-ctok build --corpus data/raw/example.txt --output artifacts/tokenizers/ctok_v1 --config configs/tokenizers/ctok.yaml
-ctok encode --artifact artifacts/tokenizers/ctok_v1 --input data/raw/example.txt --format ids
-ctok eval --artifact artifacts/tokenizers/ctok_v1 --corpus data/raw/example.txt
+python -m ctok_extras.cli.main build --corpus data/raw/example.txt --output artifacts/tokenizers/ctok_v1 \
+  --config configs/tokenizers/ctok.yaml
+python -m ctok_extras.cli.main encode --artifact artifacts/tokenizers/ctok_v1 \
+  --input data/raw/example.txt --format ids
+python -m ctok_extras.cli.main eval --artifact artifacts/tokenizers/ctok_v1 \
+  --corpus data/raw/example.txt
 ```
 
 Optional: add a label-aligned file to enable the label-entropy distortion proxy:
 
 ```bash
-ctok build --corpus data/raw/example.txt --labels data/raw/example.labels \
+python -m ctok_extras.cli.main build --corpus data/raw/example.txt --labels data/raw/example.labels \
   --output artifacts/tokenizers/ctok_v1 --config configs/tokenizers/ctok.yaml
 ```
 
 For boundary-respecting candidates (boundary-healing baseline), add:
 
 ```bash
-ctok build --corpus data/raw/example.txt --output artifacts/tokenizers/ctok_v1 \
+python -m ctok_extras.cli.main build --corpus data/raw/example.txt --output artifacts/tokenizers/ctok_v1 \
   --config configs/tokenizers/ctok.yaml --boundary-aware
 ```
 
 ### Python usage
 
 ```python
-from ctok.tokenization import CtokTokenizer
+from ctok_core.tokenization import CtokTokenizer
 
 tokenizer = CtokTokenizer.from_pretrained("artifacts/tokenizers/ctok_v1")
 batch = tokenizer(["GET /", "POST /admin"], padding=True, truncation=True, max_length=128)
@@ -72,7 +75,7 @@ uv sync --extra transformers
 ```
 
 ```python
-from ctok.tokenization.hf import CtokHFTokenizer
+from ctok_core.tokenization.hf import CtokHFTokenizer
 
 hf_tokenizer = CtokHFTokenizer.from_pretrained("artifacts/tokenizers/ctok_v1")
 ```
@@ -81,13 +84,14 @@ hf_tokenizer = CtokHFTokenizer.from_pretrained("artifacts/tokenizers/ctok_v1")
 
 ```bash
 uv sync --extra transformers --extra hf
-ctok train --task waf_http --model roberta_base --tokenizer ctok_v1 \
+python -m ctok_extras.cli.main train --task waf_http --model roberta_base --tokenizer ctok_v1 \
   --output results/runs/roberta_waf_http
 ```
 
 ## Layout
 
-- `src/ctok/`: core package (tokenization runtime, induction, probes, diagnostics).
+- `src/ctok_core/`: core package (tokenization runtime, compiler, induction).
+- `ctok_extras/`: datasets, experiments, diagnostics, probes, models, and CLI tooling.
 - `configs/`: configuration files for datasets, tokenizers, models, and experiments.
 - `scripts/`: one-off helper scripts (data prep, export, end-to-end runs).
 - `docs/`: project documentation and paper-facing notes.

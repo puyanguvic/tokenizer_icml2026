@@ -17,10 +17,10 @@ from typing import Any
 
 import yaml
 
-from ctok.datasets.config import DatasetConfig
-from ctok.experiments.plotting import plot_rate_distortion, plot_robustness
-from ctok.experiments.report import build_report
-from ctok.experiments.sweeps import default_tokenizer_specs, run_sweep
+from ctok_extras.datasets.config import DatasetConfig
+from ctok_extras.experiments.plotting import plot_rate_distortion, plot_robustness
+from ctok_extras.experiments.report import build_report
+from ctok_extras.experiments.sweeps import default_tokenizer_specs, run_sweep
 
 
 def main() -> int:

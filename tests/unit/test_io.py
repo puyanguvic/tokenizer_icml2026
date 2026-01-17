@@ -1,6 +1,6 @@
-from ctok.tokenization.io import load_tokenizer, save_tokenizer
-from ctok.tokenization.rules import RuleSet
-from ctok.tokenization.vocab import Vocabulary
+from ctok_core.tokenization.io import load_tokenizer, save_tokenizer
+from ctok_core.tokenization.rules import RuleSet
+from ctok_core.tokenization.vocab import Vocabulary
 
 
 def test_save_load(tmp_path):
