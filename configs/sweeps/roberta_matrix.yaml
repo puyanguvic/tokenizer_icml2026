@@ -1,4 +1,0 @@
-name: roberta_matrix
-datasets: [waf_http, phishing_html, hdfs_v1]
-models: [distilroberta, roberta_base, roberta_large]
-protocols: [equal_model, equal_compute]

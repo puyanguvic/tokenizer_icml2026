@@ -1,5 +1,0 @@
-name: roberta_base
-family: transformer
-hf_id: roberta-base
-num_layers: 12
-hidden_size: 768

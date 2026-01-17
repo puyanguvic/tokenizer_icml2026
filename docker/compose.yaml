@@ -1,6 +1,0 @@
-services:
-  ctok:
-    build: .
-    volumes:
-      - ..:/app
-    command: ["ctok", "--help"]

@@ -1,4 +1,0 @@
-name: rate_distortion
-vocab_sizes: [8000, 16000, 32000]
-lambda_weights: [0.0, 0.1, 0.5, 1.0]
-protocol: equal_model

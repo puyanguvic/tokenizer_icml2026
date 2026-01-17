@@ -1,8 +1,0 @@
-protocol: equal_model
-max_length: 512
-batch_size: 32
-train_steps: 10000
-learning_rate: 2.0e-5
-optimizer: adamw
-metrics: [auroc, f1, accuracy]
-report_system: true

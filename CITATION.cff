@@ -1,9 +1,0 @@
-cff-version: 1.2.0
-message: "If you use this software, please cite it."
-title: "Controlled Tokenization (ctok)"
-version: "0.1.0"
-license: "MIT"
-authors:
-  - family-names: Yang
-    given-names: Pu
-    email: puyang@uvic.ca
