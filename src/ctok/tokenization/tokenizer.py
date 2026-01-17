@@ -59,6 +59,10 @@ class CtokTokenizer:
         return self._vocab
 
     @property
+    def rules(self) -> RuleSet | None:
+        return self._rules
+
+    @property
     def vocab_size(self) -> int:
         return len(self._vocab.tokens)
 

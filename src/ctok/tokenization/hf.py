@@ -9,7 +9,7 @@ from ctok.tokenization.io import load_tokenizer, save_tokenizer
 from ctok.tokenization.rules import RuleSet
 from ctok.tokenization.tokenizer import CtokTokenizer
 from ctok.tokenization.vocab import Vocabulary
-from ctok.utils.serialization import read_json, write_json
+from ctok.utils.serialization import read_json
 
 try:
     from transformers import PreTrainedTokenizer
@@ -75,6 +75,11 @@ class CtokHFTokenizer(PreTrainedTokenizer):
             model_input_names=list(self.model_input_names),
             **kwargs,
         )
+        self.boundary_mode = boundary_mode
+        self.boundary_chars = boundary_chars
+        self._auto_map = {"AutoTokenizer": "ctok.tokenization.hf.CtokHFTokenizer"}
+        self.init_kwargs["boundary_mode"] = boundary_mode
+        self.init_kwargs["boundary_chars"] = boundary_chars
 
     @property
     def vocab_size(self) -> int:  # type: ignore[override]
@@ -127,20 +132,13 @@ class CtokHFTokenizer(PreTrainedTokenizer):
     def save_vocabulary(self, save_directory: str, filename_prefix: str | None = None) -> tuple[str, ...]:
         output_dir = Path(save_directory)
         output_dir.mkdir(parents=True, exist_ok=True)
-        save_tokenizer(output_dir, self._ctok.vocab, RuleSet.from_vocab(self._ctok.vocab))
+        rules = self._ctok.rules or RuleSet.from_vocab(self._ctok.vocab)
+        save_tokenizer(output_dir, self._ctok.vocab, rules)
 
         vocab_path = output_dir / "vocab.json"
         rules_path = output_dir / "rules.json"
         manifest_path = output_dir / "manifest.json"
         return str(vocab_path), str(rules_path), str(manifest_path)
-
-    def save_pretrained(self, save_directory: str | Path, **kwargs: Any) -> tuple[str, ...]:  # type: ignore[override]
-        output_dir = Path(save_directory)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        files = self._ctok.save_pretrained(output_dir)
-        special_map_path = output_dir / "special_tokens_map.json"
-        write_json(special_map_path, self.special_tokens_map)
-        return tuple(str(path) for path in list(files) + [special_map_path])
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path: str | Path, *args: Any, **kwargs: Any) -> "CtokHFTokenizer":
