@@ -1,5 +1,5 @@
-from ctok.tokenization.runtime import BoundaryAwareTokenizerRuntime, TokenizerRuntime
-from ctok.tokenization.vocab import Vocabulary
+from ctok_core.tokenization.runtime import BoundaryAwareTokenizerRuntime, TokenizerRuntime
+from ctok_core.tokenization.vocab import Vocabulary
 
 
 def test_longest_match():

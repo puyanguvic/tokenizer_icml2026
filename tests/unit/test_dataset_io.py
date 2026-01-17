@@ -1,7 +1,7 @@
 import json
 
-from ctok.datasets.config import DatasetConfig
-from ctok.datasets.io import load_dataset
+from ctok_extras.datasets.config import DatasetConfig
+from ctok_extras.datasets.io import load_dataset
 
 
 def test_load_jsonl(tmp_path):

@@ -13,4 +13,4 @@ typecheck:
 	uv run mypy src
 
 bench:
-	uv run python -m ctok.cli.main bench --help
+	uv run python -m ctok_extras.cli.main bench --help
