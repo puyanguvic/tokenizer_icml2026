@@ -1,6 +1,0 @@
-name: ablations
-lambda_weights: [0.0, 0.1]
-probe_types: [linear, mlp]
-teacher_types: [label, structure]
-boundary_aware: [false, true]
-runtime: [dfa, fst, heuristic]

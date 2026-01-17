@@ -1,3 +1,0 @@
-protocol: benchmark
-batch_sizes: [1, 8, 32]
-measurements: [tokenization_speed, end2end_throughput, memory_profile]

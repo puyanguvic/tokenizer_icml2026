@@ -1,8 +1,0 @@
-dataset: configs/datasets/waf_http.yaml
-model: configs/models/roberta_base.yaml
-tokenizer: configs/tokenizers/ctok.yaml
-experiment: configs/experiments/equal_model.yaml
-
-build:
-  corpus: data/raw/example.txt
-  output_dir: artifacts/tokenizers/ctok_v1

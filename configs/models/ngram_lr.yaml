@@ -1,6 +1,0 @@
-name: ngram_lr
-family: linear
-analyzer: char
-ngram_range: [3, 5]
-min_df: 2
-model: logistic_regression

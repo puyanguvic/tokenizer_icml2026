@@ -1,8 +1,0 @@
-protocol: equal_compute
-compute_budget_tokens: 1.0e9
-max_length: 512
-batch_size: 32
-learning_rate: 2.0e-5
-optimizer: adamw
-metrics: [auroc, f1, accuracy]
-report_system: true
