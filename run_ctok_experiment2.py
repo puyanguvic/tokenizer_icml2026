@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import random
+import re
 from pathlib import Path
 from typing import Callable, List, Tuple
 
@@ -48,6 +50,37 @@ def resolve_label_mapping(train_ds, label_key: str) -> Tuple[List[str], Callable
     return label_list, add_labels
 
 
+def randomize_values(text: str, rng: random.Random) -> str:
+    def rand_ipv4() -> str:
+        return ".".join(str(rng.randint(1, 254)) for _ in range(4))
+
+    def rand_port() -> str:
+        return str(rng.randint(1, 65535))
+
+    def rand_hex(n: int) -> str:
+        return "".join(rng.choice("0123456789abcdef") for _ in range(n))
+
+    def rand_b64(n: int) -> str:
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        return "".join(rng.choice(alphabet) for _ in range(n))
+
+    out = text
+    out = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}:\d{1,5}\b", lambda _: f"{rand_ipv4()}:{rand_port()}", out)
+    out = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", lambda _: rand_ipv4(), out)
+    out = re.sub(
+        r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b",
+        lambda _: f"{rand_hex(8)}-{rand_hex(4)}-{rand_hex(4)}-{rand_hex(4)}-{rand_hex(12)}",
+        out,
+    )
+    out = re.sub(r"\b[0-9a-fA-F]{16,}\b", lambda m: rand_hex(len(m.group(0))), out)
+    out = re.sub(r"\b[A-Za-z0-9+/]{24,}={0,2}\b", lambda m: rand_b64(len(m.group(0))), out)
+    out = re.sub(r"\b\d{10}(?:\d{3})?\b", lambda m: rand_hex(len(m.group(0))), out)
+    out = re.sub(r"\bblk_-?\d+\b", lambda _: f"blk_{rand_hex(12)}", out)
+    out = re.sub(r"/part-\d+\b", lambda m: f"/part-{rand_hex(len(m.group(0)) - 6)}", out)
+    out = re.sub(r"\b(?:job|attempt|container)_[A-Za-z0-9_]+(?:-\d+)?\b", lambda _: f"job_{rand_hex(12)}", out)
+    return out
+
+
 def run(args: argparse.Namespace) -> None:
     text_key, label_key = resolve_keys(args.dataset, args.text_key, args.label_key)
     if label_key is None:
@@ -88,13 +121,30 @@ def run(args: argparse.Namespace) -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, trust_remote_code=True)
 
-    def preprocess(batch):
-        return tokenizer(batch[text_key], truncation=True, max_length=args.max_length)
+    rng_train = random.Random(args.value_randomization_seed)
+    rng_eval = random.Random(args.value_randomization_seed + 1)
+
+    def preprocess_train(batch):
+        texts = batch[text_key]
+        if args.value_randomization_train:
+            texts = [randomize_values(t, rng_train) for t in texts]
+        return tokenizer(texts, truncation=True, max_length=args.max_length)
+
+    def preprocess_eval(batch):
+        texts = batch[text_key]
+        if args.value_randomization_eval:
+            texts = [randomize_values(t, rng_eval) for t in texts]
+        return tokenizer(texts, truncation=True, max_length=args.max_length)
 
     remove_cols = [c for c in train_ds.column_names if c not in ["labels", text_key]]
-    train_ds = train_ds.map(preprocess, batched=True, remove_columns=remove_cols)
+    if args.value_randomization_train:
+        print("Value randomization: enabled for train")
+    if args.value_randomization_eval:
+        print("Value randomization: enabled for eval")
+
+    train_ds = train_ds.map(preprocess_train, batched=True, remove_columns=remove_cols)
     remove_cols = [c for c in eval_ds.column_names if c not in ["labels", text_key]]
-    eval_ds = eval_ds.map(preprocess, batched=True, remove_columns=remove_cols)
+    eval_ds = eval_ds.map(preprocess_eval, batched=True, remove_columns=remove_cols)
 
     config = AutoConfig.from_pretrained(
         args.model_name,
@@ -174,6 +224,9 @@ def main() -> None:
     ap.add_argument("--num_train_epochs", type=int, default=3)
     ap.add_argument("--logging_steps", type=int, default=50)
     ap.add_argument("--save_total_limit", type=int, default=2)
+    ap.add_argument("--value_randomization_train", action="store_true")
+    ap.add_argument("--value_randomization_eval", action="store_true")
+    ap.add_argument("--value_randomization_seed", type=int, default=1234)
 
     args = ap.parse_args()
     run(args)

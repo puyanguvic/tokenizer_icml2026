@@ -7,9 +7,10 @@ import os
 import random
 import shutil
 from collections import Counter, defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+import hygiene
 
 try:
     from tqdm import tqdm as _tqdm
@@ -123,12 +124,20 @@ def corpus_iter(fmt: str, path: str, max_samples: Optional[int], text_key: str, 
     raise ValueError(f"Unknown --format: {fmt}")
 
 
-def collect_base_chars(samples: Iterable[str], boundaries: Set[str], max_base_chars: int, use_ascii_base: bool) -> Set[str]:
+def collect_base_chars(
+    samples: Iterable[str],
+    boundaries: Set[str],
+    max_base_chars: int,
+    use_ascii_base: bool,
+    extra_tokens: Optional[Sequence[str]] = None,
+) -> Set[str]:
     chars: Set[str] = set()
     if use_ascii_base:
         for i in range(128):
             chars.add(chr(i))
     chars |= boundaries
+    if extra_tokens:
+        chars.update(extra_tokens)
     for s in samples:
         for ch in s:
             chars.add(ch)
@@ -210,10 +219,12 @@ def build_vocab(
     candidates: Counter[str],
     vocab_size: int,
     special_tokens: Sequence[str],
+    required_tokens: Sequence[str],
     semantic_mode: str,
     lambda_sem: float,
     label_counts: Dict[str, int],
     token_label_counts: Dict[str, Dict[str, int]],
+    junk_penalty_beta: float = 0.0,
 ) -> Dict[str, int]:
     token_to_id: Dict[str, int] = {}
     cur_id = 0
@@ -221,6 +232,13 @@ def build_vocab(
     # specials first
     for st in special_tokens:
         token_to_id[st] = cur_id
+        cur_id += 1
+
+    # required tokens (e.g., typed tokens)
+    for tok in sorted(set(required_tokens)):
+        if tok in token_to_id:
+            continue
+        token_to_id[tok] = cur_id
         cur_id += 1
 
     # base chars
@@ -245,6 +263,8 @@ def build_vocab(
         score = gain
         if semantic_mode == "mi" and lambda_sem > 0 and label_counts:
             score += lambda_sem * compute_token_mi(tok, label_counts, token_label_counts)
+        if junk_penalty_beta > 0:
+            score -= junk_penalty_beta * hygiene.junk_score(tok)
         scored.append((score, tok))
 
     scored.sort(key=lambda x: (-x[0], x[1]))  # deterministic
@@ -256,6 +276,89 @@ def build_vocab(
         cur_id += 1
 
     return token_to_id
+
+
+def collect_doc_stats(
+    texts: Iterable[str],
+    candidates: Set[str],
+    boundaries: Set[str],
+    max_len: int,
+    allow_boundary_at_ends: bool,
+    max_chars_per_sample: int,
+) -> Tuple[Counter[str], Dict[str, int]]:
+    doc_freq: Counter[str] = Counter()
+    max_in_doc: Dict[str, int] = {}
+    for text in texts:
+        s = text[:max_chars_per_sample]
+        n = len(s)
+        i = 0
+        local: Counter[str] = Counter()
+        while i < n:
+            if s[i] in boundaries:
+                i += 1
+                continue
+            j = i
+            while j < n and (j - i) < max_len and s[j] not in boundaries:
+                j += 1
+                cur = s[i:j]
+                if len(cur) >= 2 and cur in candidates:
+                    local[cur] += 1
+                if allow_boundary_at_ends:
+                    if j < n and (len(cur) + 1) <= max_len and s[j] in boundaries:
+                        t = cur + s[j]
+                        if t in candidates:
+                            local[t] += 1
+                    if i > 0 and (len(cur) + 1) <= max_len and s[i - 1] in boundaries:
+                        t = s[i - 1] + cur
+                        if t in candidates:
+                            local[t] += 1
+            i += 1
+        for tok in local:
+            doc_freq[tok] += 1
+            prev = max_in_doc.get(tok, 0)
+            if local[tok] > prev:
+                max_in_doc[tok] = local[tok]
+    return doc_freq, max_in_doc
+
+
+def filter_candidates(
+    candidates: Counter[str],
+    texts: Iterable[str],
+    boundaries: Set[str],
+    max_len: int,
+    allow_boundary_at_ends: bool,
+    max_chars_per_sample: int,
+    filter_value_fragments: bool,
+    min_doc_freq: int,
+    max_doc_concentration: float,
+) -> Counter[str]:
+    filtered = Counter()
+    for tok, cnt in candidates.items():
+        if filter_value_fragments and hygiene.is_value_fragment(tok):
+            continue
+        filtered[tok] = cnt
+
+    if min_doc_freq <= 1 and max_doc_concentration >= 1.0:
+        return filtered
+
+    doc_freq, max_in_doc = collect_doc_stats(
+        texts,
+        candidates=set(filtered.keys()),
+        boundaries=boundaries,
+        max_len=max_len,
+        allow_boundary_at_ends=allow_boundary_at_ends,
+        max_chars_per_sample=max_chars_per_sample,
+    )
+    out = Counter()
+    for tok, cnt in filtered.items():
+        if min_doc_freq > 1 and doc_freq.get(tok, 0) < min_doc_freq:
+            continue
+        if max_doc_concentration < 1.0:
+            ratio = max_in_doc.get(tok, 0) / max(cnt, 1)
+            if ratio > max_doc_concentration:
+                continue
+        out[tok] = cnt
+    return out
 
 
 def build_token_label_counts(
@@ -349,6 +452,9 @@ def write_artifact(
     semantic_top_k: int,
     model_max_length: int,
     emit_code: bool,
+    hygiene_cfg: hygiene.HygieneConfig,
+    hygiene_metrics: Dict[str, float],
+    hygiene_build: Dict[str, object],
 ) -> None:
     os.makedirs(outdir, exist_ok=True)
 
@@ -359,6 +465,8 @@ def write_artifact(
     meta = {
         "match_special_tokens": False,
         "artifact_version": "ctok-fast-v1",
+        "hygiene": hygiene_cfg.to_dict(),
+        "hygiene_metrics": hygiene_metrics,
         "build": {
             "format": fmt,
             "text_key": text_key,
@@ -371,6 +479,7 @@ def write_artifact(
             "semantic_mode": semantic_mode,
             "lambda_sem": lambda_sem,
             "semantic_top_k": semantic_top_k,
+            **hygiene_build,
         },
     }
     with open(os.path.join(outdir, "ctok_meta.json"), "w", encoding="utf-8") as f:
@@ -407,7 +516,7 @@ def write_artifact(
 
     if emit_code:
         here = Path(__file__).resolve().parent
-        for fn in ["tokenization_ctok.py", "tokenization_ctok_fast.py"]:
+        for fn in ["tokenization_ctok.py", "tokenization_ctok_fast.py", "hygiene.py"]:
             shutil.copy(str(here / fn), os.path.join(outdir, fn))
 
     with open(os.path.join(outdir, "README.md"), "w", encoding="utf-8") as f:
@@ -444,6 +553,11 @@ def main() -> None:
     ap.add_argument("--semantic_mode", choices=["none", "mi"], default="none")
     ap.add_argument("--lambda_sem", type=float, default=0.0)
     ap.add_argument("--semantic_top_k", type=int, default=50000)
+    ap.add_argument("--no_hygiene", action="store_true", help="Disable hygiene replacements")
+    ap.add_argument("--no_filter_value_fragments", action="store_true", help="Disable value-fragment candidate filtering")
+    ap.add_argument("--min_doc_freq", type=int, default=1)
+    ap.add_argument("--max_doc_concentration", type=float, default=1.0)
+    ap.add_argument("--junk_penalty_beta", type=float, default=0.0)
 
     ap.add_argument("--model_max_length", type=int, default=512)
     ap.add_argument("--emit_code", action="store_true")
@@ -459,9 +573,23 @@ def main() -> None:
     samples: List[Tuple[Optional[str], str]] = []
     for y, x in it:
         samples.append((y, x))
+    hygiene_cfg = hygiene.default_hygiene_config()
+    hygiene_cfg.enabled = not args.no_hygiene
+    if not hygiene_cfg.enabled:
+        hygiene_cfg.typed_tokens = []
+        hygiene_cfg.patterns = []
+
+    if hygiene_cfg.enabled:
+        samples = [(y, hygiene.apply_hygiene(x, hygiene_cfg)) for y, x in samples]
     texts = [x for _, x in samples]
 
-    base_chars = collect_base_chars(texts, boundaries, max_base_chars=args.max_base_chars, use_ascii_base=args.use_ascii_base)
+    base_chars = collect_base_chars(
+        texts,
+        boundaries,
+        max_base_chars=args.max_base_chars,
+        use_ascii_base=args.use_ascii_base,
+        extra_tokens=hygiene_cfg.typed_tokens,
+    )
 
     allow_boundary_at_ends = not args.no_boundary_ends
 
@@ -473,6 +601,17 @@ def main() -> None:
         min_freq=args.min_freq,
         allow_boundary_at_ends=allow_boundary_at_ends,
         max_chars_per_sample=args.max_chars_per_sample,
+    )
+    cands = filter_candidates(
+        candidates=cands,
+        texts=texts,
+        boundaries=boundaries,
+        max_len=args.max_len,
+        allow_boundary_at_ends=allow_boundary_at_ends,
+        max_chars_per_sample=args.max_chars_per_sample,
+        filter_value_fragments=not args.no_filter_value_fragments,
+        min_doc_freq=args.min_doc_freq,
+        max_doc_concentration=args.max_doc_concentration,
     )
 
     label_counts: Dict[str, int] = {}
@@ -490,6 +629,8 @@ def main() -> None:
                 max_chars_per_sample=args.max_chars_per_sample,
                 semantic_top_k=args.semantic_top_k,
             )
+            if cands:
+                token_label_counts = {k: v for k, v in token_label_counts.items() if k in cands}
 
     special = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
 
@@ -498,10 +639,12 @@ def main() -> None:
         candidates=cands,
         vocab_size=args.vocab_size,
         special_tokens=special,
+        required_tokens=hygiene_cfg.typed_tokens,
         semantic_mode=args.semantic_mode,
         lambda_sem=args.lambda_sem,
         label_counts=label_counts,
         token_label_counts=token_label_counts,
+        junk_penalty_beta=args.junk_penalty_beta,
     )
 
     write_artifact(
@@ -519,6 +662,15 @@ def main() -> None:
         semantic_top_k=args.semantic_top_k,
         model_max_length=args.model_max_length,
         emit_code=args.emit_code,
+        hygiene_cfg=hygiene_cfg,
+        hygiene_metrics=hygiene.vocab_hygiene_metrics(vocab.keys(), hygiene_cfg.typed_tokens),
+        hygiene_build={
+            "hygiene_enabled": hygiene_cfg.enabled,
+            "filter_value_fragments": not args.no_filter_value_fragments,
+            "min_doc_freq": args.min_doc_freq,
+            "max_doc_concentration": args.max_doc_concentration,
+            "junk_penalty_beta": args.junk_penalty_beta,
+        },
     )
 
     print(f"Wrote CTok FAST artifact to: {args.outdir}")

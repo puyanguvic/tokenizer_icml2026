@@ -130,11 +130,21 @@ def build_ctok_artifact(
         str(args.semantic_top_k),
         "--model_max_length",
         str(args.model_max_length),
+        "--min_doc_freq",
+        str(args.min_doc_freq),
+        "--max_doc_concentration",
+        str(args.max_doc_concentration),
+        "--junk_penalty_beta",
+        str(args.junk_penalty_beta),
     ]
     if args.use_ascii_base:
         cmd.append("--use_ascii_base")
     if args.emit_code:
         cmd.append("--emit_code")
+    if args.no_hygiene:
+        cmd.append("--no_hygiene")
+    if args.no_filter_value_fragments:
+        cmd.append("--no_filter_value_fragments")
 
     print("Building CTok artifact...")
     print("Running:", " ".join(cmd))
@@ -207,15 +217,31 @@ def run(args: argparse.Namespace) -> None:
         args=args,
     )
 
+    meta_path = outdir / "ctok_meta.json"
+    meta = {}
+    if meta_path.exists():
+        import json as _json
+
+        with meta_path.open("r", encoding="utf-8") as f:
+            meta = _json.load(f)
+        hygiene_metrics = meta.get("hygiene_metrics")
+        if hygiene_metrics:
+            print(f"Hygiene metrics: {hygiene_metrics}")
+
     if previews:
         from transformers import AutoTokenizer
 
         print("Loading tokenizer from artifact...")
         tok = AutoTokenizer.from_pretrained(str(outdir), trust_remote_code=True)
         print("Tokenizer:", type(tok))
+        typed_tokens = set(meta.get("hygiene", {}).get("typed_tokens", []))
         for i, text in enumerate(previews, start=1):
             print(f"[{i}] {text}")
-            print(tok.tokenize(text))
+            tokens = tok.tokenize(text)
+            print(tokens)
+            if typed_tokens:
+                mass = sum(1 for t in tokens if t in typed_tokens) / max(len(tokens), 1)
+                print(f"typed_token_mass={mass:.4f}")
 
 
 def main() -> None:
@@ -236,6 +262,11 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cache_dir", default="datasets/hf_cache")
     ap.add_argument("--force_corpus", action="store_true")
+    ap.add_argument("--no_hygiene", action="store_true")
+    ap.add_argument("--no_filter_value_fragments", action="store_true")
+    ap.add_argument("--min_doc_freq", type=int, default=1)
+    ap.add_argument("--max_doc_concentration", type=float, default=1.0)
+    ap.add_argument("--junk_penalty_beta", type=float, default=0.0)
 
     ap.add_argument("--vocab_size", type=int, default=8192)
     ap.add_argument("--max_len", type=int, default=12)

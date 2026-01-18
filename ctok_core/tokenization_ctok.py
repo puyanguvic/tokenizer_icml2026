@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from transformers import PreTrainedTokenizer
 
+import hygiene
+
 
 @dataclass
 class TrieNode:
@@ -99,6 +101,7 @@ class CTokTokenizer(PreTrainedTokenizer):
         self.id_to_token: Dict[int, str] = {v: k for k, v in self.token_to_id.items()}
 
         self.match_special_tokens: bool = bool(meta.get("match_special_tokens", False))
+        self.hygiene_cfg = hygiene.HygieneConfig.from_dict(meta.get("hygiene", {})) if meta.get("hygiene") else hygiene.HygieneConfig(enabled=False)
 
         # sanity: specials must exist
         for st in [self.pad_token, self.unk_token, self.cls_token, self.sep_token, self.mask_token]:
@@ -126,6 +129,7 @@ class CTokTokenizer(PreTrainedTokenizer):
         return len(self.token_to_id)
 
     def _tokenize(self, text: str) -> List[str]:
+        text = hygiene.apply_hygiene(text, self.hygiene_cfg)
         toks: List[str] = []
         i = 0
         while i < len(text):
@@ -176,6 +180,7 @@ class CTokTokenizer(PreTrainedTokenizer):
 
     # Optional helper for diagnostics
     def encode_with_offsets(self, text: str) -> Tuple[List[int], List[Tuple[int, int]]]:
+        text = hygiene.apply_hygiene(text, self.hygiene_cfg)
         ids: List[int] = []
         offsets: List[Tuple[int, int]] = []
         i = 0

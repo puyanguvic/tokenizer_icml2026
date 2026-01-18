@@ -17,4 +17,4 @@ parquet = ["pyarrow>=12.0", "pandas>=1.5"]
 ctok-build = "build_ctok_from_corpus:main"
 
 [tool.setuptools]
-py-modules = ["build_ctok_from_corpus", "tokenization_ctok"]
+py-modules = ["build_ctok_from_corpus", "tokenization_ctok", "tokenization_ctok_fast", "hygiene", "build_ctok"]
