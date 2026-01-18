@@ -262,6 +262,10 @@ def build_ctok_artifact(
         str(args.mp_chunk_factor),
         "--mp_chunk_chars",
         str(args.mp_chunk_chars),
+        "--candidate_prefilter_samples",
+        str(args.candidate_prefilter_samples),
+        "--candidate_prefilter_min_freq",
+        str(args.candidate_prefilter_min_freq),
     ]
     if args.lowercase:
         cmd.append("--lowercase")
@@ -472,6 +476,8 @@ def main() -> None:
     ap.add_argument("--mp_chunksize", type=int, default=16)
     ap.add_argument("--mp_chunk_factor", type=int, default=1)
     ap.add_argument("--mp_chunk_chars", type=int, default=0)
+    ap.add_argument("--candidate_prefilter_samples", type=int, default=0)
+    ap.add_argument("--candidate_prefilter_min_freq", type=int, default=1)
     ap.add_argument("--streaming", action="store_true")
     ap.add_argument("--preview", type=int, default=3, help="Show tokenization previews after build")
     ap.add_argument("--sample_ratio", type=float, default=1.0, help="Use only a fraction of the split (0-1]")

@@ -186,6 +186,148 @@ def _get_text(item: object) -> str:
     return str(item)
 
 
+def _select_prefilter_indices(total: int, max_samples: int) -> List[int]:
+    if max_samples <= 0 or max_samples >= total:
+        return list(range(total))
+    step = max(1, total // max_samples)
+    idxs = list(range(0, total, step))
+    return idxs[:max_samples]
+
+
+def _build_prefixes(tokens: Iterable[str], boundaries: Set[str]) -> Set[str]:
+    prefixes: Set[str] = set()
+    for tok in tokens:
+        if any(ch in boundaries for ch in tok):
+            continue
+        for i in range(1, len(tok) + 1):
+            prefixes.add(tok[:i])
+    return prefixes
+
+
+def _get_memory_info_bytes() -> Tuple[Optional[int], Optional[int]]:
+    try:
+        import psutil  # type: ignore
+
+        vm = psutil.virtual_memory()
+        return int(vm.total), int(vm.available)
+    except Exception:
+        pass
+    try:
+        total = None
+        available = None
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total = int(line.split()[1]) * 1024
+                elif line.startswith("MemAvailable:"):
+                    available = int(line.split()[1]) * 1024
+                if total is not None and available is not None:
+                    break
+        return total, available
+    except Exception:
+        return None, None
+
+
+_GLOBAL_TEXTS: Optional[List[object]] = None
+_GLOBAL_BOUNDARIES: Optional[Set[str]] = None
+_GLOBAL_MAX_LEN: Optional[int] = None
+_GLOBAL_ALLOW_BOUNDARY_AT_ENDS: Optional[bool] = None
+_GLOBAL_MAX_CHARS_PER_SAMPLE: Optional[int] = None
+_GLOBAL_CANDIDATE_WHITELIST: Optional[Set[str]] = None
+_GLOBAL_CANDIDATE_PREFIXES: Optional[Set[str]] = None
+
+
+def _init_candidates_globals(
+    texts: List[object],
+    boundaries: Set[str],
+    max_len: int,
+    allow_boundary_at_ends: bool,
+    max_chars_per_sample: int,
+    whitelist: Optional[Set[str]] = None,
+    prefixes: Optional[Set[str]] = None,
+) -> None:
+    global _GLOBAL_TEXTS, _GLOBAL_BOUNDARIES, _GLOBAL_MAX_LEN, _GLOBAL_ALLOW_BOUNDARY_AT_ENDS, _GLOBAL_MAX_CHARS_PER_SAMPLE
+    global _GLOBAL_CANDIDATE_WHITELIST, _GLOBAL_CANDIDATE_PREFIXES
+    _GLOBAL_TEXTS = texts
+    _GLOBAL_BOUNDARIES = boundaries
+    _GLOBAL_MAX_LEN = max_len
+    _GLOBAL_ALLOW_BOUNDARY_AT_ENDS = allow_boundary_at_ends
+    _GLOBAL_MAX_CHARS_PER_SAMPLE = max_chars_per_sample
+    _GLOBAL_CANDIDATE_WHITELIST = whitelist
+    _GLOBAL_CANDIDATE_PREFIXES = prefixes
+
+
+def _collect_candidates_chunk_idxs(idxs: Iterable[int]) -> Counter[str]:
+    texts = _GLOBAL_TEXTS
+    boundaries = _GLOBAL_BOUNDARIES
+    max_len = _GLOBAL_MAX_LEN
+    allow_boundary_at_ends = _GLOBAL_ALLOW_BOUNDARY_AT_ENDS
+    max_chars_per_sample = _GLOBAL_MAX_CHARS_PER_SAMPLE
+    whitelist = _GLOBAL_CANDIDATE_WHITELIST
+    prefixes = _GLOBAL_CANDIDATE_PREFIXES
+    if texts is None or boundaries is None or max_len is None or allow_boundary_at_ends is None or max_chars_per_sample is None:
+        raise RuntimeError("Candidate worker globals not initialized.")
+    cnt: Counter[str] = Counter()
+    for idx in idxs:
+        text = _get_text(texts[idx])
+        s = text[:max_chars_per_sample]
+        n = len(s)
+        i = 0
+        while i < n:
+            if s[i] in boundaries:
+                i += 1
+                continue
+            j = i
+            cur = ""
+            while j < n and (j - i) < max_len and s[j] not in boundaries:
+                nxt = cur + s[j]
+                if prefixes is not None and nxt not in prefixes:
+                    break
+                cur = nxt
+                if len(cur) >= 2 and (whitelist is None or cur in whitelist):
+                    cnt[cur] += 1
+                j += 1
+            if allow_boundary_at_ends and len(cur) >= 2:
+                if j < n and (len(cur) + 1) <= max_len and s[j] in boundaries:
+                    t = cur + s[j]
+                    if whitelist is None or t in whitelist:
+                        cnt[t] += 1
+                if i > 0 and (len(cur) + 1) <= max_len and s[i - 1] in boundaries:
+                    t = s[i - 1] + cur
+                    if whitelist is None or t in whitelist:
+                        cnt[t] += 1
+            i += 1
+    return cnt
+
+
+_GLOBAL_BASE_TEXTS: Optional[List[object]] = None
+_GLOBAL_BASE_BOUNDARIES: Optional[Set[str]] = None
+_GLOBAL_BASE_MAX_CHARS: Optional[int] = None
+
+
+def _init_base_chars_globals(samples: List[object], boundaries: Set[str], max_base_chars: int) -> None:
+    global _GLOBAL_BASE_TEXTS, _GLOBAL_BASE_BOUNDARIES, _GLOBAL_BASE_MAX_CHARS
+    _GLOBAL_BASE_TEXTS = samples
+    _GLOBAL_BASE_BOUNDARIES = boundaries
+    _GLOBAL_BASE_MAX_CHARS = max_base_chars
+
+
+def _collect_base_chars_chunk_idxs(idxs: Iterable[int]) -> Set[str]:
+    samples = _GLOBAL_BASE_TEXTS
+    boundaries = _GLOBAL_BASE_BOUNDARIES
+    max_base_chars = _GLOBAL_BASE_MAX_CHARS
+    if samples is None or boundaries is None or max_base_chars is None:
+        raise RuntimeError("Base-char worker globals not initialized.")
+    chars: Set[str] = set()
+    for idx in idxs:
+        s = _get_text(samples[idx])
+        for ch in s:
+            chars.add(ch)
+            if len(chars) >= max_base_chars:
+                return chars
+    return chars
+
+
 def collect_base_chars(
     samples: Iterable[object],
     boundaries: Set[str],
@@ -220,14 +362,24 @@ def collect_base_chars(
 
     print(f"Collecting base chars with {num_workers} workers")
     chunk_size = max(1, total // (num_workers * max(chunk_factor, 1)))
-    chunks = [sample_list[i : i + chunk_size] for i in range(0, total, chunk_size)]
-    args_list = [(c, boundaries, max_base_chars) for c in chunks]
-    with mp.Pool(processes=num_workers) as pool:
-        results_iter = pool.imap_unordered(_collect_base_chars_chunk, args_list, chunksize=1)
+    num_chunks = (total + chunk_size - 1) // chunk_size
+    idx_iter = (range(i, min(i + chunk_size, total)) for i in range(0, total, chunk_size))
+    ctx = mp.get_context()
+    if ctx.get_start_method(allow_none=True) == "fork":
+        _init_base_chars_globals(sample_list, boundaries, max_base_chars)
+        pool = ctx.Pool(processes=num_workers)
+    else:
+        pool = ctx.Pool(
+            processes=num_workers,
+            initializer=_init_base_chars_globals,
+            initargs=(sample_list, boundaries, max_base_chars),
+        )
+    with pool:
+        results_iter = pool.imap_unordered(_collect_base_chars_chunk_idxs, idx_iter, chunksize=1)
         if _tqdm is not None:
             results_iter = _tqdm(
                 results_iter,
-                total=len(args_list),
+                total=num_chunks,
                 desc="Collecting base chars (mp)",
                 unit="chunks",
                 file=sys.stdout,
@@ -369,6 +521,8 @@ def collect_candidates(
     min_freq: int,
     allow_boundary_at_ends: bool,
     max_chars_per_sample: int,
+    whitelist: Optional[Set[str]] = None,
+    whitelist_prefixes: Optional[Set[str]] = None,
     num_workers: int = 1,
     mp_chunksize: int = 1,
     chunk_factor: int = 4,
@@ -377,6 +531,8 @@ def collect_candidates(
     cnt: Counter[str] = Counter()
     text_list = texts if isinstance(texts, list) else list(texts)
     total = len(text_list)
+    if (whitelist is not None or whitelist_prefixes is not None) and chunk_chars:
+        chunk_chars = 0
     if num_workers <= 1 or total == 0:
         for item in _progress(text_list, total=total, desc="Collecting candidates", unit="samples"):
             text = _get_text(item)
@@ -388,31 +544,87 @@ def collect_candidates(
                     i += 1
                     continue
                 j = i
+                cur = ""
                 while j < n and (j - i) < max_len and s[j] not in boundaries:
-                    j += 1
-                    cur = s[i:j]
-                    if len(cur) >= 2:
+                    nxt = cur + s[j]
+                    if whitelist_prefixes is not None and nxt not in whitelist_prefixes:
+                        break
+                    cur = nxt
+                    if len(cur) >= 2 and (whitelist is None or cur in whitelist):
                         cnt[cur] += 1
-                    if allow_boundary_at_ends:
-                        if j < n and (len(cur) + 1) <= max_len and s[j] in boundaries:
-                            cnt[cur + s[j]] += 1
-                        if i > 0 and (len(cur) + 1) <= max_len and s[i - 1] in boundaries:
-                            cnt[s[i - 1] + cur] += 1
+                    j += 1
+                if allow_boundary_at_ends and len(cur) >= 2:
+                    if j < n and (len(cur) + 1) <= max_len and s[j] in boundaries:
+                        t = cur + s[j]
+                        if whitelist is None or t in whitelist:
+                            cnt[t] += 1
+                    if i > 0 and (len(cur) + 1) <= max_len and s[i - 1] in boundaries:
+                        t = s[i - 1] + cur
+                        if whitelist is None or t in whitelist:
+                            cnt[t] += 1
                 i += 1
     else:
         print(f"Collecting candidates with {num_workers} workers")
         if chunk_chars and chunk_chars > 0:
             chunks = _chunk_by_char_budget(text_list, max_chars_per_sample, chunk_chars)
+            num_chunks = len(chunks)
+            args_iter = (
+                (c, boundaries, max_len, min_freq, allow_boundary_at_ends, max_chars_per_sample) for c in chunks
+            )
+            with mp.Pool(processes=num_workers) as pool:
+                results_iter = pool.imap_unordered(_collect_candidates_chunk, args_iter, chunksize=mp_chunksize)
+                if _tqdm is not None:
+                    results_iter = _tqdm(
+                        results_iter,
+                        total=num_chunks,
+                        desc="Collecting candidates (mp)",
+                        unit="chunks",
+                        file=sys.stdout,
+                        dynamic_ncols=True,
+                    )
+                for c in results_iter:
+                    cnt.update(c)
+            # filter
+            for k in list(cnt.keys()):
+                if cnt[k] < min_freq:
+                    del cnt[k]
+            return cnt
         else:
             chunk_size = max(1, total // (num_workers * max(chunk_factor, 1)))
-            chunks = [text_list[i : i + chunk_size] for i in range(0, total, chunk_size)]
-        args_list = [(c, boundaries, max_len, min_freq, allow_boundary_at_ends, max_chars_per_sample) for c in chunks]
-        with mp.Pool(processes=num_workers) as pool:
-            results_iter = pool.imap_unordered(_collect_candidates_chunk, args_list, chunksize=mp_chunksize)
+            num_chunks = (total + chunk_size - 1) // chunk_size
+            chunk_iter = (range(i, min(i + chunk_size, total)) for i in range(0, total, chunk_size))
+        ctx = mp.get_context()
+        if ctx.get_start_method(allow_none=True) == "fork":
+            _init_candidates_globals(
+                text_list,
+                boundaries,
+                max_len,
+                allow_boundary_at_ends,
+                max_chars_per_sample,
+                whitelist=whitelist,
+                prefixes=whitelist_prefixes,
+            )
+            pool = ctx.Pool(processes=num_workers)
+        else:
+            pool = ctx.Pool(
+                processes=num_workers,
+                initializer=_init_candidates_globals,
+                initargs=(
+                    text_list,
+                    boundaries,
+                    max_len,
+                    allow_boundary_at_ends,
+                    max_chars_per_sample,
+                    whitelist,
+                    whitelist_prefixes,
+                ),
+            )
+        with pool:
+            results_iter = pool.imap_unordered(_collect_candidates_chunk_idxs, chunk_iter, chunksize=mp_chunksize)
             if _tqdm is not None:
                 results_iter = _tqdm(
                     results_iter,
-                    total=len(args_list),
+                    total=num_chunks,
                     desc="Collecting candidates (mp)",
                     unit="chunks",
                     file=sys.stdout,
@@ -987,6 +1199,56 @@ def build_ctok_from_samples(
 
     allow_boundary_at_ends = not args.no_boundary_ends
 
+    candidate_whitelist: Optional[Set[str]] = None
+    candidate_prefixes: Optional[Set[str]] = None
+    prefilter_samples = args.candidate_prefilter_samples
+    prefilter_min_freq = args.candidate_prefilter_min_freq
+    total_texts = len(texts)
+    if prefilter_samples <= 0:
+        _total_mem, avail_mem = _get_memory_info_bytes()
+        if total_texts >= 1_000_000 and args.max_len >= 8 and args.max_chars_per_sample >= 1024:
+            avail_gb = (avail_mem or 0) / (1024**3)
+            if avail_mem is None or avail_gb < 24:
+                if avail_mem is None:
+                    prefilter_samples = min(500_000, total_texts)
+                elif avail_gb < 8:
+                    prefilter_samples = min(200_000, total_texts)
+                elif avail_gb < 16:
+                    prefilter_samples = min(400_000, total_texts)
+                else:
+                    prefilter_samples = min(800_000, total_texts)
+                if prefilter_min_freq <= 0:
+                    prefilter_min_freq = 2 if args.min_freq >= 5 else 1
+                mem_note = "unknown" if avail_mem is None else f"{avail_gb:.1f}GB"
+                print(
+                    f"Auto prefiltering candidates with {prefilter_samples} samples "
+                    f"(min_freq={prefilter_min_freq}, avail_mem={mem_note})"
+                )
+    if prefilter_samples and prefilter_samples > 0 and prefilter_samples < total_texts:
+        idxs = _select_prefilter_indices(total_texts, prefilter_samples)
+        sample_texts = [texts[i] for i in idxs]
+        print(f"Prefiltering candidates with {len(sample_texts)} samples")
+        pre_cands = collect_candidates(
+            texts=sample_texts,
+            boundaries=boundaries,
+            max_len=args.max_len,
+            min_freq=args.min_freq,
+            allow_boundary_at_ends=allow_boundary_at_ends,
+            max_chars_per_sample=args.max_chars_per_sample,
+            num_workers=num_workers,
+            mp_chunksize=args.mp_chunksize,
+            chunk_factor=args.mp_chunk_factor,
+            chunk_chars=args.mp_chunk_chars,
+        )
+        pre_min = max(1, int(prefilter_min_freq))
+        if pre_min > 1:
+            for k in list(pre_cands.keys()):
+                if pre_cands[k] < pre_min:
+                    del pre_cands[k]
+        candidate_whitelist = set(pre_cands.keys())
+        candidate_prefixes = _build_prefixes(candidate_whitelist, boundaries)
+        print(f"Prefilter candidates kept: {len(candidate_whitelist)}")
+
     cands = collect_candidates(
         texts=texts,
         boundaries=boundaries,
@@ -994,6 +1256,8 @@ def build_ctok_from_samples(
         min_freq=args.min_freq,
         allow_boundary_at_ends=allow_boundary_at_ends,
         max_chars_per_sample=args.max_chars_per_sample,
+        whitelist=candidate_whitelist,
+        whitelist_prefixes=candidate_prefixes,
         num_workers=num_workers,
         mp_chunksize=args.mp_chunksize,
         chunk_factor=args.mp_chunk_factor,
@@ -1108,6 +1372,18 @@ def main() -> None:
     ap.add_argument("--mp_chunksize", type=int, default=16)
     ap.add_argument("--mp_chunk_factor", type=int, default=1, help="Chunks per worker; smaller = larger chunks")
     ap.add_argument("--mp_chunk_chars", type=int, default=0, help="Target characters per chunk for candidate collection")
+    ap.add_argument(
+        "--candidate_prefilter_samples",
+        type=int,
+        default=0,
+        help="Sample size for candidate prefiltering (0=disabled)",
+    )
+    ap.add_argument(
+        "--candidate_prefilter_min_freq",
+        type=int,
+        default=1,
+        help="Min freq in prefilter sample to keep a candidate",
+    )
 
     ap.add_argument("--semantic_mode", choices=["none", "mi"], default="none")
     ap.add_argument("--lambda_sem", type=float, default=0.0)
