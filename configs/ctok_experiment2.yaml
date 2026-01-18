@@ -1,0 +1,25 @@
+dataset: logfit-project/HDFS_v1
+config: ""
+train_split: train
+eval_split: validation
+eval_ratio: 0.1
+text_key: ""
+label_key: ""
+cache_dir: datasets/hf_cache
+sample_ratio: 0.1
+seed: 42
+tokenizer_path: tokenizers/logfit-project__HDFS_v1_train
+model_name: google/bert_uncased_L-4_H-256_A-4
+output_dir: ""
+max_length: 256
+per_device_train_batch_size: 16
+per_device_eval_batch_size: 32
+learning_rate: 5e-5
+num_train_epochs: 3
+logging_steps: 50
+save_total_limit: 2
+hydra:
+  run:
+    dir: .
+  job:
+    chdir: false

@@ -42,3 +42,10 @@ tok = AutoTokenizer.from_pretrained("./ctok_http_8k", trust_remote_code=True)
 Notes:
 - Runtime is **fast** because the artifact includes `tokenizer.json` built with `tokenizers` (Rust).
 - Segmentation is greedy longest-match (WordPiece) with `continuing_subword_prefix=""`.
+
+## Experiments
+
+Experiment 1: build CTok tokenizer from dataset (see `run_ctok_experiment.py` or `run_ctok_experiment_hydra.py`).
+
+Experiment 2: fine-tune a classifier using a CTok tokenizer with a BERT model
+(see `run_ctok_experiment2.py` or `run_ctok_experiment2_hydra.py`).
