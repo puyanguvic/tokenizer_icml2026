@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import shutil
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -14,6 +15,19 @@ try:
     from tqdm import tqdm as _tqdm
 except Exception:
     _tqdm = None
+
+
+def _progress(iterable, total=None, desc: str = "", unit: str = "it"):
+    if _tqdm is None:
+        return iterable
+    return _tqdm(
+        iterable,
+        total=total,
+        desc=desc,
+        unit=unit,
+        file=sys.stdout,
+        dynamic_ncols=True,
+    )
 
 
 def parse_escaped_chars(s: str) -> Set[str]:
@@ -139,9 +153,7 @@ def collect_candidates(
 ) -> Counter[str]:
     cnt: Counter[str] = Counter()
     total = len(pairs) if hasattr(pairs, "__len__") else None
-    iterator = pairs
-    if _tqdm is not None:
-        iterator = _tqdm(pairs, total=total, desc="Collecting candidates", unit="samples")
+    iterator = _progress(pairs, total=total, desc="Collecting candidates", unit="samples")
     for _, text in iterator:
         s = text[:max_chars_per_sample]
         n = len(s)
@@ -192,9 +204,7 @@ def estimate_mi_scores(
 
     n = 0
     total = len(pairs) if hasattr(pairs, "__len__") else None
-    iterator = pairs
-    if _tqdm is not None:
-        iterator = _tqdm(pairs, total=total, desc="Estimating MI", unit="samples")
+    iterator = _progress(pairs, total=total, desc="Estimating MI", unit="samples")
     for y, x in iterator:
         if y is None:
             continue

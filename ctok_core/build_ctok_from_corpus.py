@@ -20,6 +20,19 @@ except Exception:
     _tqdm = None
 
 
+def _progress(iterable, total=None, desc: str = "", unit: str = "it"):
+    if _tqdm is None:
+        return iterable
+    return _tqdm(
+        iterable,
+        total=total,
+        desc=desc,
+        unit=unit,
+        file=sys.stdout,
+        dynamic_ncols=True,
+    )
+
+
 def parse_boundaries(boundaries: str) -> Set[str]:
     # Interpret escapes (\n, \t, \" ...) using unicode_escape decoding.
     decoded = boundaries.encode("utf-8").decode("unicode_escape")
@@ -207,6 +220,45 @@ def _count_token_label_chunk(
     return local_labels, local_counts
 
 
+def _collect_doc_stats_chunk(
+    args: Tuple[List[str], Set[str], int, bool, int, Set[str]]
+) -> Tuple[Counter[str], Dict[str, int]]:
+    texts, candidates, max_len, allow_boundary_at_ends, max_chars_per_sample, boundaries = args
+    doc_freq: Counter[str] = Counter()
+    max_in_doc: Dict[str, int] = {}
+    for text in texts:
+        s = text[:max_chars_per_sample]
+        n = len(s)
+        i = 0
+        local: Counter[str] = Counter()
+        while i < n:
+            if s[i] in boundaries:
+                i += 1
+                continue
+            j = i
+            while j < n and (j - i) < max_len and s[j] not in boundaries:
+                j += 1
+                cur = s[i:j]
+                if len(cur) >= 2 and cur in candidates:
+                    local[cur] += 1
+                if allow_boundary_at_ends:
+                    if j < n and (len(cur) + 1) <= max_len and s[j] in boundaries:
+                        t = cur + s[j]
+                        if t in candidates:
+                            local[t] += 1
+                    if i > 0 and (len(cur) + 1) <= max_len and s[i - 1] in boundaries:
+                        t = s[i - 1] + cur
+                        if t in candidates:
+                            local[t] += 1
+            i += 1
+        for tok in local:
+            doc_freq[tok] += 1
+            prev = max_in_doc.get(tok, 0)
+            if local[tok] > prev:
+                max_in_doc[tok] = local[tok]
+    return doc_freq, max_in_doc
+
+
 def collect_candidates(
     texts: Iterable[str],
     boundaries: Set[str],
@@ -220,10 +272,7 @@ def collect_candidates(
     text_list = list(texts)
     total = len(text_list)
     if num_workers <= 1 or total == 0:
-        iterator = text_list
-        if _tqdm is not None:
-            iterator = _tqdm(text_list, total=total, desc="Collecting candidates", unit="samples")
-        for text in iterator:
+        for text in _progress(text_list, total=total, desc="Collecting candidates", unit="samples"):
             s = text[:max_chars_per_sample]
             n = len(s)
             i = 0
@@ -257,6 +306,7 @@ def collect_candidates(
                     desc="Collecting candidates (mp)",
                     unit="chunks",
                     file=sys.stdout,
+                    dynamic_ncols=True,
                 )
             for c in results_iter:
                 cnt.update(c)
@@ -366,39 +416,65 @@ def collect_doc_stats(
     max_len: int,
     allow_boundary_at_ends: bool,
     max_chars_per_sample: int,
+    num_workers: int = 1,
 ) -> Tuple[Counter[str], Dict[str, int]]:
     doc_freq: Counter[str] = Counter()
     max_in_doc: Dict[str, int] = {}
-    for text in texts:
-        s = text[:max_chars_per_sample]
-        n = len(s)
-        i = 0
-        local: Counter[str] = Counter()
-        while i < n:
-            if s[i] in boundaries:
+    total = len(texts) if hasattr(texts, "__len__") else None
+    if num_workers <= 1 or total == 0:
+        for text in _progress(texts, total=total, desc="Doc stats", unit="samples"):
+            s = text[:max_chars_per_sample]
+            n = len(s)
+            i = 0
+            local: Counter[str] = Counter()
+            while i < n:
+                if s[i] in boundaries:
+                    i += 1
+                    continue
+                j = i
+                while j < n and (j - i) < max_len and s[j] not in boundaries:
+                    j += 1
+                    cur = s[i:j]
+                    if len(cur) >= 2 and cur in candidates:
+                        local[cur] += 1
+                    if allow_boundary_at_ends:
+                        if j < n and (len(cur) + 1) <= max_len and s[j] in boundaries:
+                            t = cur + s[j]
+                            if t in candidates:
+                                local[t] += 1
+                        if i > 0 and (len(cur) + 1) <= max_len and s[i - 1] in boundaries:
+                            t = s[i - 1] + cur
+                            if t in candidates:
+                                local[t] += 1
                 i += 1
-                continue
-            j = i
-            while j < n and (j - i) < max_len and s[j] not in boundaries:
-                j += 1
-                cur = s[i:j]
-                if len(cur) >= 2 and cur in candidates:
-                    local[cur] += 1
-                if allow_boundary_at_ends:
-                    if j < n and (len(cur) + 1) <= max_len and s[j] in boundaries:
-                        t = cur + s[j]
-                        if t in candidates:
-                            local[t] += 1
-                    if i > 0 and (len(cur) + 1) <= max_len and s[i - 1] in boundaries:
-                        t = s[i - 1] + cur
-                        if t in candidates:
-                            local[t] += 1
-            i += 1
-        for tok in local:
-            doc_freq[tok] += 1
-            prev = max_in_doc.get(tok, 0)
-            if local[tok] > prev:
-                max_in_doc[tok] = local[tok]
+            for tok in local:
+                doc_freq[tok] += 1
+                prev = max_in_doc.get(tok, 0)
+                if local[tok] > prev:
+                    max_in_doc[tok] = local[tok]
+    else:
+        print(f"Doc stats with {num_workers} workers")
+        text_list = list(texts)
+        chunk_size = max(1, len(text_list) // (num_workers * 4))
+        chunks = [text_list[i : i + chunk_size] for i in range(0, len(text_list), chunk_size)]
+        args_list = [(c, candidates, max_len, allow_boundary_at_ends, max_chars_per_sample, boundaries) for c in chunks]
+        with mp.Pool(processes=num_workers) as pool:
+            results_iter = pool.imap_unordered(_collect_doc_stats_chunk, args_list, chunksize=1)
+            if _tqdm is not None:
+                results_iter = _tqdm(
+                    results_iter,
+                    total=len(args_list),
+                    desc="Doc stats (mp)",
+                    unit="chunks",
+                    file=sys.stdout,
+                    dynamic_ncols=True,
+                )
+            for local_doc_freq, local_max_in_doc in results_iter:
+                doc_freq.update(local_doc_freq)
+                for tok, cnt in local_max_in_doc.items():
+                    prev = max_in_doc.get(tok, 0)
+                    if cnt > prev:
+                        max_in_doc[tok] = cnt
     return doc_freq, max_in_doc
 
 
@@ -413,6 +489,7 @@ def filter_candidates(
     typed_tokens: Sequence[str],
     min_doc_freq: int,
     max_doc_concentration: float,
+    num_workers: int = 1,
 ) -> Counter[str]:
     filtered = Counter()
     for tok, cnt in candidates.items():
@@ -432,6 +509,7 @@ def filter_candidates(
         max_len=max_len,
         allow_boundary_at_ends=allow_boundary_at_ends,
         max_chars_per_sample=max_chars_per_sample,
+        num_workers=num_workers,
     )
     out = Counter()
     for tok, cnt in filtered.items():
@@ -453,22 +531,29 @@ def build_token_label_counts(
     allow_boundary_at_ends: bool,
     max_chars_per_sample: int,
     semantic_top_k: int,
+    candidates: Optional[Counter[str]] = None,
     num_workers: int = 1,
 ) -> Tuple[Dict[str, int], Dict[str, Dict[str, int]]]:
     # Build candidate list first, then count token occurrences by label for top_k.
     texts = [x for _, x in labeled_samples]
-    cands = collect_candidates(texts, boundaries, max_len, min_freq, allow_boundary_at_ends, max_chars_per_sample)
-    top = set([tok for tok, _ in cands.most_common(semantic_top_k)])
+    if candidates is None:
+        candidates = collect_candidates(
+            texts=texts,
+            boundaries=boundaries,
+            max_len=max_len,
+            min_freq=min_freq,
+            allow_boundary_at_ends=allow_boundary_at_ends,
+            max_chars_per_sample=max_chars_per_sample,
+            num_workers=num_workers,
+        )
+    top = set([tok for tok, _ in candidates.most_common(semantic_top_k)])
 
     label_counts: Dict[str, int] = Counter([y for y, _ in labeled_samples])
     token_label_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     total = len(labeled_samples) if hasattr(labeled_samples, "__len__") else None
     if num_workers <= 1 or total == 0:
-        iterator = labeled_samples
-        if _tqdm is not None:
-            iterator = _tqdm(labeled_samples, total=total, desc="Counting token-labels", unit="samples")
-        for y, x in iterator:
+        for y, x in _progress(labeled_samples, total=total, desc="Counting token-labels", unit="samples"):
             # simple presence counting in each sample: count all occurrences (not just binary) for cheap signal
             s = x[:max_chars_per_sample]
             n = len(s)
@@ -507,6 +592,7 @@ def build_token_label_counts(
                     desc="Counting token-labels (mp)",
                     unit="chunks",
                     file=sys.stdout,
+                    dynamic_ncols=True,
                 )
             label_counts = Counter()
             token_label_counts = defaultdict(lambda: defaultdict(int))
@@ -639,6 +725,128 @@ def write_artifact(
         )
 
 
+def build_ctok_from_samples(
+    samples: List[Tuple[Optional[str], str]],
+    text_key: str,
+    label_key: Optional[str],
+    outdir: str,
+    args: argparse.Namespace,
+) -> None:
+    boundaries = parse_boundaries(args.boundaries)
+    hygiene_cfg = hygiene.default_hygiene_config()
+    hygiene_cfg.enabled = not args.no_hygiene
+    if not hygiene_cfg.enabled:
+        hygiene_cfg.typed_tokens = []
+        hygiene_cfg.patterns = []
+
+    if hygiene_cfg.enabled:
+        samples = [(y, hygiene.apply_hygiene(x, hygiene_cfg)) for y, x in samples]
+    texts = [x for _, x in samples]
+
+    base_chars = collect_base_chars(
+        texts,
+        boundaries,
+        max_base_chars=args.max_base_chars,
+        use_ascii_base=args.use_ascii_base,
+        extra_tokens=hygiene_cfg.typed_tokens,
+    )
+
+    allow_boundary_at_ends = not args.no_boundary_ends
+
+    num_workers = args.num_workers
+    if num_workers <= 0:
+        num_workers = max(1, mp.cpu_count() - 1)
+
+    cands = collect_candidates(
+        texts=texts,
+        boundaries=boundaries,
+        max_len=args.max_len,
+        min_freq=args.min_freq,
+        allow_boundary_at_ends=allow_boundary_at_ends,
+        max_chars_per_sample=args.max_chars_per_sample,
+        num_workers=num_workers,
+    )
+    cands_raw = cands
+    cands = filter_candidates(
+        candidates=cands,
+        texts=texts,
+        boundaries=boundaries,
+        max_len=args.max_len,
+        allow_boundary_at_ends=allow_boundary_at_ends,
+        max_chars_per_sample=args.max_chars_per_sample,
+        filter_value_fragments=not args.no_filter_value_fragments,
+        typed_tokens=hygiene_cfg.typed_tokens,
+        min_doc_freq=args.min_doc_freq,
+        max_doc_concentration=args.max_doc_concentration,
+        num_workers=num_workers,
+    )
+
+    label_counts: Dict[str, int] = {}
+    token_label_counts: Dict[str, Dict[str, int]] = {}
+
+    if args.semantic_mode == "mi" and label_key is not None:
+        labeled = [(y, x) for y, x in samples if y is not None]
+        if labeled:
+            label_counts, token_label_counts = build_token_label_counts(
+                labeled_samples=[(str(y), x) for y, x in labeled],
+                boundaries=boundaries,
+                max_len=args.max_len,
+                min_freq=args.min_freq,
+                allow_boundary_at_ends=allow_boundary_at_ends,
+                max_chars_per_sample=args.max_chars_per_sample,
+                semantic_top_k=args.semantic_top_k,
+                candidates=cands_raw,
+                num_workers=num_workers,
+            )
+            if cands:
+                token_label_counts = {k: v for k, v in token_label_counts.items() if k in cands}
+
+    special = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+
+    vocab = build_vocab(
+        base_chars=base_chars,
+        candidates=cands,
+        vocab_size=args.vocab_size,
+        special_tokens=special,
+        required_tokens=hygiene_cfg.typed_tokens,
+        semantic_mode=args.semantic_mode,
+        lambda_sem=args.lambda_sem,
+        label_counts=label_counts,
+        token_label_counts=token_label_counts,
+        junk_penalty_beta=args.junk_penalty_beta,
+    )
+
+    write_artifact(
+        outdir=outdir,
+        token_to_id=vocab,
+        boundaries=boundaries,
+        vocab_size=args.vocab_size,
+        max_len=args.max_len,
+        min_freq=args.min_freq,
+        fmt=args.format,
+        text_key=text_key,
+        label_key=label_key,
+        semantic_mode=args.semantic_mode,
+        lambda_sem=args.lambda_sem,
+        semantic_top_k=args.semantic_top_k,
+        model_max_length=args.model_max_length,
+        emit_code=args.emit_code,
+        hygiene_cfg=hygiene_cfg,
+        hygiene_metrics=hygiene.vocab_hygiene_metrics(vocab.keys(), hygiene_cfg.typed_tokens),
+        hygiene_build={
+            "hygiene_enabled": hygiene_cfg.enabled,
+            "filter_value_fragments": not args.no_filter_value_fragments,
+            "min_doc_freq": args.min_doc_freq,
+            "max_doc_concentration": args.max_doc_concentration,
+            "junk_penalty_beta": args.junk_penalty_beta,
+        },
+    )
+
+    print(f"Wrote CTok FAST artifact to: {outdir}")
+    print(f"Vocab size: {len(vocab)} (requested {args.vocab_size})")
+    print(f"Candidates kept: {len(cands)}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True, help="Path to corpus (txt/tsv/jsonl/parquet) or parquet directory")
@@ -676,125 +884,21 @@ def main() -> None:
     if args.max_samples is not None and args.max_samples <= 0:
         args.max_samples = None
 
-    boundaries = parse_boundaries(args.boundaries)
     label_key = args.label_key if args.label_key else None
 
     it = corpus_iter(args.format, args.corpus, args.max_samples, args.text_key, label_key)
 
-    # Materialize a subset for base chars + optional MI stats (keeps code simple).
     samples: List[Tuple[Optional[str], str]] = []
-    for y, x in it:
+    for y, x in _progress(it, desc="Reading corpus", unit="samples"):
         samples.append((y, x))
-    hygiene_cfg = hygiene.default_hygiene_config()
-    hygiene_cfg.enabled = not args.no_hygiene
-    if not hygiene_cfg.enabled:
-        hygiene_cfg.typed_tokens = []
-        hygiene_cfg.patterns = []
 
-    if hygiene_cfg.enabled:
-        samples = [(y, hygiene.apply_hygiene(x, hygiene_cfg)) for y, x in samples]
-    texts = [x for _, x in samples]
-
-    base_chars = collect_base_chars(
-        texts,
-        boundaries,
-        max_base_chars=args.max_base_chars,
-        use_ascii_base=args.use_ascii_base,
-        extra_tokens=hygiene_cfg.typed_tokens,
-    )
-
-    allow_boundary_at_ends = not args.no_boundary_ends
-
-    # candidates (frequency)
-    num_workers = args.num_workers
-    if num_workers <= 0:
-        num_workers = max(1, mp.cpu_count() - 1)
-
-    cands = collect_candidates(
-        texts=texts,
-        boundaries=boundaries,
-        max_len=args.max_len,
-        min_freq=args.min_freq,
-        allow_boundary_at_ends=allow_boundary_at_ends,
-        max_chars_per_sample=args.max_chars_per_sample,
-        num_workers=num_workers,
-    )
-    cands = filter_candidates(
-        candidates=cands,
-        texts=texts,
-        boundaries=boundaries,
-        max_len=args.max_len,
-        allow_boundary_at_ends=allow_boundary_at_ends,
-        max_chars_per_sample=args.max_chars_per_sample,
-        filter_value_fragments=not args.no_filter_value_fragments,
-        typed_tokens=hygiene_cfg.typed_tokens,
-        min_doc_freq=args.min_doc_freq,
-        max_doc_concentration=args.max_doc_concentration,
-    )
-
-    label_counts: Dict[str, int] = {}
-    token_label_counts: Dict[str, Dict[str, int]] = {}
-
-    if args.semantic_mode == "mi" and label_key is not None:
-        labeled = [(y, x) for y, x in samples if y is not None]
-        if labeled:
-            label_counts, token_label_counts = build_token_label_counts(
-                labeled_samples=[(str(y), x) for y, x in labeled],
-                boundaries=boundaries,
-                max_len=args.max_len,
-                min_freq=args.min_freq,
-                allow_boundary_at_ends=allow_boundary_at_ends,
-                max_chars_per_sample=args.max_chars_per_sample,
-                semantic_top_k=args.semantic_top_k,
-                num_workers=num_workers,
-            )
-            if cands:
-                token_label_counts = {k: v for k, v in token_label_counts.items() if k in cands}
-
-    special = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
-
-    vocab = build_vocab(
-        base_chars=base_chars,
-        candidates=cands,
-        vocab_size=args.vocab_size,
-        special_tokens=special,
-        required_tokens=hygiene_cfg.typed_tokens,
-        semantic_mode=args.semantic_mode,
-        lambda_sem=args.lambda_sem,
-        label_counts=label_counts,
-        token_label_counts=token_label_counts,
-        junk_penalty_beta=args.junk_penalty_beta,
-    )
-
-    write_artifact(
-        outdir=args.outdir,
-        token_to_id=vocab,
-        boundaries=boundaries,
-        vocab_size=args.vocab_size,
-        max_len=args.max_len,
-        min_freq=args.min_freq,
-        fmt=args.format,
+    build_ctok_from_samples(
+        samples=samples,
         text_key=args.text_key,
         label_key=label_key,
-        semantic_mode=args.semantic_mode,
-        lambda_sem=args.lambda_sem,
-        semantic_top_k=args.semantic_top_k,
-        model_max_length=args.model_max_length,
-        emit_code=args.emit_code,
-        hygiene_cfg=hygiene_cfg,
-        hygiene_metrics=hygiene.vocab_hygiene_metrics(vocab.keys(), hygiene_cfg.typed_tokens),
-        hygiene_build={
-            "hygiene_enabled": hygiene_cfg.enabled,
-            "filter_value_fragments": not args.no_filter_value_fragments,
-            "min_doc_freq": args.min_doc_freq,
-            "max_doc_concentration": args.max_doc_concentration,
-            "junk_penalty_beta": args.junk_penalty_beta,
-        },
+        outdir=args.outdir,
+        args=args,
     )
-
-    print(f"Wrote CTok FAST artifact to: {args.outdir}")
-    print(f"Vocab size: {len(vocab)} (requested {args.vocab_size})")
-    print(f"Candidates kept: {len(cands)}")
 
 
 if __name__ == "__main__":

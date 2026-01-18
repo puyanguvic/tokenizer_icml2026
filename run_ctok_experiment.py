@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -30,6 +31,58 @@ def iter_dataset_rows(dataset: Iterable[dict]) -> Iterable[dict]:
             yield row
         else:
             yield dict(row)
+
+
+def collect_samples_from_dataset(
+    dataset: Iterable[dict],
+    text_key: str,
+    label_key: str | None,
+    max_samples: int | None,
+    preview_count: int,
+) -> Tuple[List[Tuple[str | None, str]], List[str], int, List[str]]:
+    try:
+        from tqdm import tqdm
+    except Exception:
+        tqdm = None
+
+    previews: List[str] = []
+    first_keys: List[str] = []
+    missing_text = 0
+    samples: List[Tuple[str | None, str]] = []
+
+    total = None
+    try:
+        total = len(dataset)  # type: ignore[arg-type]
+    except Exception:
+        total = None
+    if total is not None and max_samples is not None:
+        total = min(total, max_samples)
+
+    iterator = iter_dataset_rows(dataset)
+    if tqdm is not None:
+        iterator = tqdm(iterator, total=total, desc="Collecting samples", unit="rows")
+
+    for row in iterator:
+        if not first_keys:
+            first_keys = sorted(row.keys())
+        if text_key not in row:
+            missing_text += 1
+            continue
+        text = row[text_key]
+        if text is None:
+            missing_text += 1
+            continue
+        text = str(text)
+        label = None
+        if label_key and label_key in row and row[label_key] is not None:
+            label = str(row[label_key])
+        samples.append((label, text))
+        if len(previews) < preview_count:
+            previews.append(text)
+        if max_samples is not None and len(samples) >= max_samples:
+            break
+
+    return samples, previews, missing_text, first_keys
 
 
 def write_jsonl_corpus(
@@ -144,6 +197,12 @@ def build_ctok_artifact(
         str(args.max_len),
         "--min_freq",
         str(args.min_freq),
+        "--max_chars_per_sample",
+        str(args.max_chars_per_sample),
+        "--boundaries",
+        args.boundaries,
+        "--max_base_chars",
+        str(args.max_base_chars),
         "--max_samples",
         max_samples_str,
         "--semantic_mode",
@@ -171,10 +230,63 @@ def build_ctok_artifact(
         cmd.append("--no_hygiene")
     if args.no_filter_value_fragments:
         cmd.append("--no_filter_value_fragments")
+    if args.no_boundary_ends:
+        cmd.append("--no_boundary_ends")
 
     print("Building CTok artifact...")
     print("Running:", " ".join(cmd))
     subprocess.check_call(cmd)
+
+
+def build_ctok_artifact_from_dataset(
+    dataset: Iterable[dict],
+    outdir: Path,
+    text_key: str,
+    label_key: str | None,
+    args: argparse.Namespace,
+) -> Tuple[List[str], int]:
+    repo_root = Path(__file__).resolve().parent
+    build_script = repo_root / "ctok_core" / "build_ctok_from_corpus.py"
+    if not build_script.exists():
+        raise FileNotFoundError(f"Missing builder: {build_script}")
+
+    if hasattr(dataset, "column_names") and text_key not in dataset.column_names:
+        raise SystemExit(f"text_key='{text_key}' not found in dataset columns: {dataset.column_names}")
+    if label_key and hasattr(dataset, "column_names") and label_key not in dataset.column_names:
+        label_key = None
+
+    samples, previews, missing_text, first_keys = collect_samples_from_dataset(
+        dataset,
+        text_key=text_key,
+        label_key=label_key,
+        max_samples=None if args.max_samples <= 0 else args.max_samples,
+        preview_count=args.preview,
+    )
+    if not samples:
+        msg = f"No samples collected; text_key='{text_key}' not found or empty."
+        if first_keys:
+            msg += f" Available keys example: {first_keys}"
+        raise SystemExit(msg)
+    if missing_text:
+        print(f"Skipped {missing_text} rows missing text_key='{text_key}'")
+
+    spec = importlib.util.spec_from_file_location("ctok_build_ctok_from_corpus", build_script)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"Failed to load builder module from: {build_script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    print("Building CTok artifact directly from HF dataset (no corpus export)...")
+    if not hasattr(args, "format"):
+        args.format = "hf_dataset"
+    module.build_ctok_from_samples(
+        samples=samples,
+        text_key=text_key,
+        label_key=label_key,
+        outdir=str(outdir),
+        args=args,
+    )
+    return previews, len(samples)
 
 
 def run(args: argparse.Namespace) -> None:
@@ -203,7 +315,6 @@ def run(args: argparse.Namespace) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     corpus_out.parent.mkdir(parents=True, exist_ok=True)
     print(f"Cache dir: {args.cache_dir}")
-    print(f"Corpus path: {corpus_out}")
     print(f"Tokenizer outdir: {outdir}")
     print(f"Using text_key='{text_key}' label_key='{label_key or ''}'")
 
@@ -228,36 +339,45 @@ def run(args: argparse.Namespace) -> None:
     elif args.streaming and args.sample_ratio < 1.0:
         print("Streaming mode ignores --sample_ratio; use --max_samples to limit size.")
 
-    if corpus_out.exists() and not args.force_corpus:
-        print(f"Reusing existing corpus: {corpus_out}")
-        if args.sample_ratio >= 1.0 and max_samples is None:
-            print("Warning: existing corpus may be a subsample. Use --force_corpus to rebuild full corpus.")
-        previews = []
-        kept = 1
-        first_keys = []
-    else:
-        previews, kept, _, first_keys = write_jsonl_corpus(
-            dataset,
-            corpus_out,
+    previews: List[str] = []
+    if args.write_corpus:
+        print(f"Corpus path: {corpus_out}")
+        if corpus_out.exists() and not args.force_corpus:
+            print(f"Reusing existing corpus: {corpus_out}")
+            if args.sample_ratio >= 1.0 and max_samples is None:
+                print("Warning: existing corpus may be a subsample. Use --force_corpus to rebuild full corpus.")
+            kept = 1
+            first_keys: List[str] = []
+        else:
+            previews, kept, _, first_keys = write_jsonl_corpus(
+                dataset,
+                corpus_out,
+                text_key=text_key,
+                label_key=label_key,
+                max_samples=max_samples,
+                preview_count=args.preview,
+                num_proc=corpus_num_proc,
+            )
+        if kept == 0:
+            msg = f"No samples written; text_key='{text_key}' not found or empty."
+            if first_keys:
+                msg += f" Available keys example: {first_keys}"
+            raise SystemExit(msg)
+        build_ctok_artifact(
+            corpus_path=corpus_out,
+            outdir=outdir,
             text_key=text_key,
             label_key=label_key,
-            max_samples=max_samples,
-            preview_count=args.preview,
-            num_proc=corpus_num_proc,
+            args=args,
         )
-    if kept == 0:
-        msg = f"No samples written; text_key='{text_key}' not found or empty."
-        if first_keys:
-            msg += f" Available keys example: {first_keys}"
-        raise SystemExit(msg)
-
-    build_ctok_artifact(
-        corpus_path=corpus_out,
-        outdir=outdir,
-        text_key=text_key,
-        label_key=label_key,
-        args=args,
-    )
+    else:
+        previews, _ = build_ctok_artifact_from_dataset(
+            dataset=dataset,
+            outdir=outdir,
+            text_key=text_key,
+            label_key=label_key,
+            args=args,
+        )
 
     meta_path = outdir / "ctok_meta.json"
     meta = {}
@@ -296,7 +416,7 @@ def main() -> None:
     ap.add_argument("--outdir", default="", help="Tokenizer output directory (default: tokenizers/<tokenizer_name>)")
     ap.add_argument("--tokenizer_name", default="", help="Tokenizer folder name under tokenizers/")
     ap.add_argument("--tokenizer_root", default="tokenizers")
-    ap.add_argument("--corpus_out", default="", help="Where to write jsonl corpus (default: datasets/corpus/<tokenizer_name>.jsonl)")
+    ap.add_argument("--corpus_out", default="", help="Where to write jsonl corpus when --write_corpus is set")
     ap.add_argument("--max_samples", type=int, default=0)
     ap.add_argument("--num_workers", type=int, default=0)
     ap.add_argument("--streaming", action="store_true")
@@ -304,6 +424,7 @@ def main() -> None:
     ap.add_argument("--sample_ratio", type=float, default=1.0, help="Use only a fraction of the split (0-1]")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cache_dir", default="datasets/hf_cache")
+    ap.add_argument("--write_corpus", action="store_true", help="Write jsonl corpus to disk instead of building directly from HF dataset")
     ap.add_argument("--force_corpus", action="store_true")
     ap.add_argument("--corpus_num_proc", type=int, default=0, help="Parallel writers (0=auto)")
     ap.add_argument("--no_hygiene", action="store_true")
@@ -315,6 +436,10 @@ def main() -> None:
     ap.add_argument("--vocab_size", type=int, default=8192)
     ap.add_argument("--max_len", type=int, default=12)
     ap.add_argument("--min_freq", type=int, default=50)
+    ap.add_argument("--max_chars_per_sample", type=int, default=4096)
+    ap.add_argument("--boundaries", type=str, default="=&?:/\\n\\t <>\\\"'")
+    ap.add_argument("--no_boundary_ends", action="store_true")
+    ap.add_argument("--max_base_chars", type=int, default=4096)
     ap.add_argument("--semantic_mode", choices=["none", "mi"], default="none")
     ap.add_argument("--lambda_sem", type=float, default=0.0)
     ap.add_argument("--semantic_top_k", type=int, default=50000)

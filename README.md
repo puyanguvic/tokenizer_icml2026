@@ -59,7 +59,44 @@ python run_ctok_experiment.py \
   --lambda_sem 50.0 \
   --use_ascii_base \
   --emit_code
-If a corpus already exists and you want a full rebuild, add `--force_corpus`.
+By default, this builds directly from the HF dataset (no jsonl export). If you want to export and reuse a jsonl
+corpus, add `--write_corpus` (and use `--force_corpus` to rebuild an existing corpus).
+
+Common build knobs:
+- `--max_chars_per_sample` limits per-sample scan length (default 4096)
+- `--boundaries` controls token boundary characters
+- `--no_boundary_ends` disables adding boundary-prefixed/suffixed tokens
+- `--max_base_chars` caps the base character set size
+
+Performance tips for large corpora:
+- Prefer direct HF dataset builds (default) to avoid Arrow->jsonl conversion.
+- Set `--num_workers 0` to auto-use all cores (used by candidate collection and doc stats).
+- Use `--max_samples` or `--sample_ratio` for quick iterations.
+- Tighten `--max_chars_per_sample` to reduce scanning cost on long log lines.
+
+Common command patterns:
+```bash
+# Fast smoke test (small sample, fewer workers)
+python run_ctok_experiment.py \
+  --dataset logfit-project/HDFS_v1 \
+  --max_samples 50000 \
+  --num_workers 4 \
+  --use_ascii_base
+
+# Full build with MI and all cores
+python run_ctok_experiment.py \
+  --dataset logfit-project/HDFS_v1 \
+  --semantic_mode mi \
+  --lambda_sem 50.0 \
+  --num_workers 0 \
+  --use_ascii_base
+
+# Export and reuse jsonl corpus on disk
+python run_ctok_experiment.py \
+  --dataset logfit-project/HDFS_v1 \
+  --write_corpus \
+  --force_corpus
+```
 ```
 
 Experiment 2: fine-tune a classifier using a CTok tokenizer with a BERT model
