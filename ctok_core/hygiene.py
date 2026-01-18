@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Pattern, Set
+from typing import Dict, Iterable, List, Optional, Pattern, Set, Tuple
 
 
 ALLOWED_NUMBERS: Set[str] = {
@@ -227,8 +227,8 @@ def apply_hygiene(text: str, cfg: HygieneConfig) -> str:
     if not cfg.enabled:
         return text
     out = text
-    for p in cfg.patterns:
-        out = p.compile().sub(p.replacement, out)
+    for pat, repl in cfg.compiled_patterns():
+        out = pat.sub(repl, out)
     out = normalize_numbers(out)
     return out
 
