@@ -122,6 +122,8 @@ def is_value_fragment(token: str) -> bool:
         return False
     if token.startswith("<") and token.endswith(">"):
         return False
+    if re.fullmatch(r"\d{4,}", token):
+        return True
     digits = sum(1 for c in token if c.isdigit())
     digit_ratio = digits / max(len(token), 1)
     if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){1,3}", token):

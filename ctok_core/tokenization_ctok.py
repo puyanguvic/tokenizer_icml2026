@@ -2,34 +2,160 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from transformers import PreTrainedTokenizer
 
+def _build_hygiene_shim():
+    class _HygienePattern:
+        def __init__(self, name: str, pattern: str, replacement: str, flags: int = 0):
+            self.name = name
+            self.pattern = pattern
+            self.replacement = replacement
+            self.flags = flags
+
+        def compile(self):
+            return re.compile(self.pattern, self.flags)
+
+    class _HygieneConfig:
+        def __init__(self, enabled: bool = True, typed_tokens=None, patterns=None):
+            self.enabled = enabled
+            self.typed_tokens = typed_tokens or []
+            self.patterns = patterns or []
+
+        @staticmethod
+        def from_dict(data: dict) -> "_HygieneConfig":
+            patterns = []
+            for p in data.get("patterns", []):
+                patterns.append(
+                    _HygienePattern(
+                        name=str(p.get("name", "")),
+                        pattern=str(p.get("pattern", "")),
+                        replacement=str(p.get("replacement", "")),
+                        flags=int(p.get("flags", 0)),
+                    )
+                )
+            return _HygieneConfig(
+                enabled=bool(data.get("enabled", True)),
+                typed_tokens=list(data.get("typed_tokens", [])),
+                patterns=patterns,
+            )
+
+    def _apply_hygiene(text: str, cfg: _HygieneConfig) -> str:
+        if not cfg.enabled:
+            return text
+        out = text
+        for p in cfg.patterns:
+            out = p.compile().sub(p.replacement, out)
+        return out
+
+    class _Shim:
+        HygieneConfig = _HygieneConfig
+        apply_hygiene = staticmethod(_apply_hygiene)
+
+    return _Shim()
+
+
 def _import_hygiene():
-    try:
-        import hygiene  # type: ignore
+    import importlib.util
+    import sys
 
-        return hygiene
-    except ImportError:
-        import importlib.util
-        import sys
-
-        here = os.path.dirname(__file__)
-        path = os.path.join(here, "hygiene.py")
-        if not os.path.exists(path):
-            raise
+    here = os.path.dirname(__file__)
+    path = os.path.join(here, "hygiene.py")
+    if os.path.exists(path):
         spec = importlib.util.spec_from_file_location("ctok_hygiene", path)
         if spec is None or spec.loader is None:
-            raise
+            raise ImportError("Failed to load hygiene module from local file")
         module = importlib.util.module_from_spec(spec)
         sys.modules["ctok_hygiene"] = module
         spec.loader.exec_module(module)
         return module
 
+    try:
+        from . import hygiene  # type: ignore
+
+        return hygiene
+    except Exception:
+        return _build_hygiene_shim()
+
 
 hygiene = _import_hygiene()
+
+
+def _build_pretokenize_shim():
+    class _PreTokenizePattern:
+        def __init__(self, name: str, pattern: str, replacement: str, flags: int = 0):
+            self.name = name
+            self.pattern = pattern
+            self.replacement = replacement
+            self.flags = flags
+
+        def compile(self):
+            return re.compile(self.pattern, self.flags)
+
+    class _PreTokenizerConfig:
+        def __init__(self, enabled: bool = True, patterns=None):
+            self.enabled = enabled
+            self.patterns = patterns or []
+
+        @staticmethod
+        def from_dict(data: dict) -> "_PreTokenizerConfig":
+            patterns = []
+            for p in data.get("patterns", []):
+                patterns.append(
+                    _PreTokenizePattern(
+                        name=str(p.get("name", "")),
+                        pattern=str(p.get("pattern", "")),
+                        replacement=str(p.get("replacement", "")),
+                        flags=int(p.get("flags", 0)),
+                    )
+                )
+            return _PreTokenizerConfig(
+                enabled=bool(data.get("enabled", True)),
+                patterns=patterns,
+            )
+
+    def _apply_pretokenize(text: str, cfg: _PreTokenizerConfig) -> str:
+        if not cfg.enabled:
+            return text
+        out = text
+        for p in cfg.patterns:
+            out = p.compile().sub(p.replacement, out)
+        return out
+
+    class _Shim:
+        PreTokenizerConfig = _PreTokenizerConfig
+        apply_pretokenize = staticmethod(_apply_pretokenize)
+
+    return _Shim()
+
+
+def _import_pretokenize():
+    import importlib.util
+    import sys
+
+    here = os.path.dirname(__file__)
+    path = os.path.join(here, "pretokenize.py")
+    if os.path.exists(path):
+        spec = importlib.util.spec_from_file_location("ctok_pretokenize", path)
+        if spec is None or spec.loader is None:
+            raise ImportError("Failed to load pretokenize module from local file")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["ctok_pretokenize"] = module
+        spec.loader.exec_module(module)
+        return module
+
+    try:
+        from . import pretokenize  # type: ignore
+
+        return pretokenize
+    except Exception:
+        return _build_pretokenize_shim()
+
+
+pretokenize = _import_pretokenize()
 
 
 @dataclass
@@ -124,6 +250,7 @@ class CTokTokenizer(PreTrainedTokenizer):
 
         self.match_special_tokens: bool = bool(meta.get("match_special_tokens", False))
         self.hygiene_cfg = hygiene.HygieneConfig.from_dict(meta.get("hygiene", {})) if meta.get("hygiene") else hygiene.HygieneConfig(enabled=False)
+        self.pretok_cfg = pretokenize.PreTokenizerConfig.from_dict(meta.get("pretokenizer", {})) if meta.get("pretokenizer") else pretokenize.PreTokenizerConfig(enabled=False)
 
         # sanity: specials must exist
         for st in [self.pad_token, self.unk_token, self.cls_token, self.sep_token, self.mask_token]:
@@ -152,6 +279,7 @@ class CTokTokenizer(PreTrainedTokenizer):
 
     def _tokenize(self, text: str) -> List[str]:
         text = hygiene.apply_hygiene(text, self.hygiene_cfg)
+        text = pretokenize.apply_pretokenize(text, self.pretok_cfg)
         toks: List[str] = []
         i = 0
         while i < len(text):

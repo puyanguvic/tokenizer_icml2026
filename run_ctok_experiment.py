@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import json
 import subprocess
 import sys
@@ -55,6 +55,39 @@ def collect_samples_from_dataset(
         total = len(dataset)  # type: ignore[arg-type]
     except Exception:
         total = None
+
+    if max_samples is not None and total is not None and hasattr(dataset, "select"):
+        keep = min(total, max_samples)
+        if keep < total:
+            dataset = dataset.select(range(keep))
+        total = keep
+
+    if hasattr(dataset, "to_dict") and hasattr(dataset, "column_names"):
+        cols = [text_key] + ([label_key] if label_key else [])
+        print("Collecting samples via columnar export (HF dataset)")
+        data = dataset.select_columns(cols).to_dict()
+        texts = data.get(text_key, [])
+        labels = data.get(label_key) if label_key else None
+        total = len(texts)
+        iterator = range(total)
+        if tqdm is not None:
+            iterator = tqdm(iterator, total=total, desc="Collecting samples", unit="rows")
+        for i in iterator:
+            text = texts[i]
+            if text is None:
+                missing_text += 1
+                continue
+            text = text if isinstance(text, str) else str(text)
+            label = None
+            if labels is not None:
+                lab = labels[i]
+                if lab is not None:
+                    label = lab if isinstance(lab, str) else str(lab)
+            samples.append((label, text))
+            if len(previews) < preview_count:
+                previews.append(text)
+        return samples, previews, missing_text, first_keys
+
     if total is not None and max_samples is not None:
         total = min(total, max_samples)
 
@@ -222,6 +255,8 @@ def build_ctok_artifact(
         "--num_workers",
         str(args.num_workers),
     ]
+    if args.pretokenizer != "none":
+        cmd.extend(["--pretokenizer", args.pretokenizer])
     if args.use_ascii_base:
         cmd.append("--use_ascii_base")
     if args.emit_code:
@@ -270,11 +305,11 @@ def build_ctok_artifact_from_dataset(
     if missing_text:
         print(f"Skipped {missing_text} rows missing text_key='{text_key}'")
 
-    spec = importlib.util.spec_from_file_location("ctok_build_ctok_from_corpus", build_script)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f"Failed to load builder module from: {build_script}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(repo_root))
+    try:
+        module = importlib.import_module("ctok_core.build_ctok_from_corpus")
+    finally:
+        sys.path.pop(0)
 
     print("Building CTok artifact directly from HF dataset (no corpus export)...")
     if not hasattr(args, "format"):
@@ -394,7 +429,12 @@ def run(args: argparse.Namespace) -> None:
         from transformers import AutoTokenizer
 
         print("Loading tokenizer from artifact...")
-        tok = AutoTokenizer.from_pretrained(str(outdir), trust_remote_code=True)
+        tok = AutoTokenizer.from_pretrained(
+            str(outdir),
+            trust_remote_code=True,
+            local_files_only=True,
+            force_download=True,
+        )
         print("Tokenizer:", type(tok))
         typed_tokens = set(meta.get("hygiene", {}).get("typed_tokens", []))
         for i, text in enumerate(previews, start=1):
@@ -431,7 +471,8 @@ def main() -> None:
     ap.add_argument("--no_filter_value_fragments", action="store_true")
     ap.add_argument("--min_doc_freq", type=int, default=1)
     ap.add_argument("--max_doc_concentration", type=float, default=1.0)
-    ap.add_argument("--junk_penalty_beta", type=float, default=0.0)
+    ap.add_argument("--junk_penalty_beta", type=float, default=0.5)
+    ap.add_argument("--pretokenizer", choices=["none", "generic"], default="none")
 
     ap.add_argument("--vocab_size", type=int, default=8192)
     ap.add_argument("--max_len", type=int, default=12)

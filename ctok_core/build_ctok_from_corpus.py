@@ -12,12 +12,27 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-import hygiene
+from . import hygiene
+from . import pretokenize
 
 try:
     from tqdm import tqdm as _tqdm
 except Exception:
     _tqdm = None
+
+_HYGIENE_CFG: Optional[hygiene.HygieneConfig] = None
+
+
+def _init_hygiene_worker(cfg_dict: Dict[str, object]) -> None:
+    global _HYGIENE_CFG
+    _HYGIENE_CFG = hygiene.HygieneConfig.from_dict(cfg_dict)
+
+
+def _apply_hygiene_sample(sample: Tuple[Optional[str], str]) -> Tuple[Optional[str], str]:
+    y, x = sample
+    if _HYGIENE_CFG is None:
+        return y, x
+    return y, hygiene.apply_hygiene(x, _HYGIENE_CFG)
 
 
 def _progress(iterable, total=None, desc: str = "", unit: str = "it"):
@@ -217,7 +232,7 @@ def _count_token_label_chunk(
                         if t in top:
                             local_counts[t][y] += 1
             i += 1
-    return local_labels, local_counts
+    return local_labels, {k: dict(v) for k, v in local_counts.items()}
 
 
 def _collect_doc_stats_chunk(
@@ -647,6 +662,7 @@ def write_artifact(
     model_max_length: int,
     emit_code: bool,
     hygiene_cfg: hygiene.HygieneConfig,
+    pretok_cfg: pretokenize.PreTokenizerConfig,
     hygiene_metrics: Dict[str, float],
     hygiene_build: Dict[str, object],
 ) -> None:
@@ -660,6 +676,7 @@ def write_artifact(
         "match_special_tokens": False,
         "artifact_version": "ctok-fast-v1",
         "hygiene": hygiene_cfg.to_dict(),
+        "pretokenizer": pretok_cfg.to_dict(),
         "hygiene_metrics": hygiene_metrics,
         "build": {
             "format": fmt,
@@ -673,6 +690,7 @@ def write_artifact(
             "semantic_mode": semantic_mode,
             "lambda_sem": lambda_sem,
             "semantic_top_k": semantic_top_k,
+            "pretokenizer": "generic" if pretok_cfg.enabled else "none",
             **hygiene_build,
         },
     }
@@ -710,7 +728,7 @@ def write_artifact(
 
     if emit_code:
         here = Path(__file__).resolve().parent
-        for fn in ["tokenization_ctok.py", "tokenization_ctok_fast.py", "hygiene.py"]:
+        for fn in ["tokenization_ctok.py", "tokenization_ctok_fast.py", "hygiene.py", "pretokenize.py"]:
             shutil.copy(str(here / fn), os.path.join(outdir, fn))
 
     with open(os.path.join(outdir, "README.md"), "w", encoding="utf-8") as f:
@@ -733,14 +751,41 @@ def build_ctok_from_samples(
     args: argparse.Namespace,
 ) -> None:
     boundaries = parse_boundaries(args.boundaries)
+    num_workers = args.num_workers
+    if num_workers <= 0:
+        num_workers = max(1, mp.cpu_count() - 1)
+
     hygiene_cfg = hygiene.default_hygiene_config()
     hygiene_cfg.enabled = not args.no_hygiene
     if not hygiene_cfg.enabled:
         hygiene_cfg.typed_tokens = []
         hygiene_cfg.patterns = []
 
+    pretok_cfg = pretokenize.default_pretokenizer_config()
+    pretok_cfg.enabled = args.pretokenizer != "none"
+    if not pretok_cfg.enabled:
+        pretok_cfg.patterns = []
+
     if hygiene_cfg.enabled:
-        samples = [(y, hygiene.apply_hygiene(x, hygiene_cfg)) for y, x in samples]
+        if num_workers > 1 and len(samples) > 0:
+            print(f"Applying hygiene with {num_workers} workers")
+            cfg_dict = hygiene_cfg.to_dict()
+            with mp.Pool(processes=num_workers, initializer=_init_hygiene_worker, initargs=(cfg_dict,)) as pool:
+                results_iter = pool.imap(_apply_hygiene_sample, samples, chunksize=256)
+                if _tqdm is not None:
+                    results_iter = _tqdm(
+                        results_iter,
+                        total=len(samples),
+                        desc="Applying hygiene",
+                        unit="samples",
+                        file=sys.stdout,
+                        dynamic_ncols=True,
+                    )
+                samples = list(results_iter)
+        else:
+            samples = [(y, hygiene.apply_hygiene(x, hygiene_cfg)) for y, x in samples]
+    if pretok_cfg.enabled:
+        samples = [(y, pretokenize.apply_pretokenize(x, pretok_cfg)) for y, x in samples]
     texts = [x for _, x in samples]
 
     base_chars = collect_base_chars(
@@ -752,10 +797,6 @@ def build_ctok_from_samples(
     )
 
     allow_boundary_at_ends = not args.no_boundary_ends
-
-    num_workers = args.num_workers
-    if num_workers <= 0:
-        num_workers = max(1, mp.cpu_count() - 1)
 
     cands = collect_candidates(
         texts=texts,
@@ -832,6 +873,7 @@ def build_ctok_from_samples(
         model_max_length=args.model_max_length,
         emit_code=args.emit_code,
         hygiene_cfg=hygiene_cfg,
+        pretok_cfg=pretok_cfg,
         hygiene_metrics=hygiene.vocab_hygiene_metrics(vocab.keys(), hygiene_cfg.typed_tokens),
         hygiene_build={
             "hygiene_enabled": hygiene_cfg.enabled,
@@ -871,10 +913,11 @@ def main() -> None:
     ap.add_argument("--lambda_sem", type=float, default=0.0)
     ap.add_argument("--semantic_top_k", type=int, default=50000)
     ap.add_argument("--no_hygiene", action="store_true", help="Disable hygiene replacements")
+    ap.add_argument("--pretokenizer", choices=["none", "generic"], default="none")
     ap.add_argument("--no_filter_value_fragments", action="store_true", help="Disable value-fragment candidate filtering")
     ap.add_argument("--min_doc_freq", type=int, default=1)
     ap.add_argument("--max_doc_concentration", type=float, default=1.0)
-    ap.add_argument("--junk_penalty_beta", type=float, default=0.0)
+    ap.add_argument("--junk_penalty_beta", type=float, default=0.5)
 
     ap.add_argument("--model_max_length", type=int, default=512)
     ap.add_argument("--emit_code", action="store_true")

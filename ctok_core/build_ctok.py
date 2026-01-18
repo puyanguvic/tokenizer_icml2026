@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import hygiene
+import pretokenize
 
 try:
     from tqdm import tqdm as _tqdm
@@ -423,6 +424,7 @@ def write_artifact(
     build_args: Dict[str, object],
     emit_code: bool,
     hygiene_cfg: hygiene.HygieneConfig,
+    pretok_cfg: pretokenize.PreTokenizerConfig,
     hygiene_metrics: Dict[str, float],
 ):
     os.makedirs(outdir, exist_ok=True)
@@ -440,6 +442,7 @@ def write_artifact(
         "boundary_chars": sorted(list(boundaries)),
         "model_max_length": int(build_args.get("model_max_length", 512)),
         "hygiene": hygiene_cfg.to_dict(),
+        "pretokenizer": pretok_cfg.to_dict(),
         "hygiene_metrics": hygiene_metrics,
         "build": build_args,
     }
@@ -478,6 +481,7 @@ def write_artifact(
         shutil.copy2(str(here / "tokenization_ctok.py"), os.path.join(outdir, "tokenization_ctok.py"))
         shutil.copy2(str(here / "tokenization_ctok_fast.py"), os.path.join(outdir, "tokenization_ctok_fast.py"))
         shutil.copy2(str(here / "hygiene.py"), os.path.join(outdir, "hygiene.py"))
+        shutil.copy2(str(here / "pretokenize.py"), os.path.join(outdir, "pretokenize.py"))
 
     with open(os.path.join(outdir, "README.md"), "w", encoding="utf-8") as f:
         f.write(
@@ -518,10 +522,11 @@ def main():
     ap.add_argument("--model_max_length", type=int, default=512)
     ap.add_argument("--emit_code", action="store_true")
     ap.add_argument("--no_hygiene", action="store_true")
+    ap.add_argument("--pretokenizer", choices=["none", "generic"], default="none")
     ap.add_argument("--no_filter_value_fragments", action="store_true")
     ap.add_argument("--min_doc_freq", type=int, default=1)
     ap.add_argument("--max_doc_concentration", type=float, default=1.0)
-    ap.add_argument("--junk_penalty_beta", type=float, default=0.0)
+    ap.add_argument("--junk_penalty_beta", type=float, default=0.5)
 
     args = ap.parse_args()
 
@@ -551,8 +556,16 @@ def main():
     if not hygiene_cfg.enabled:
         hygiene_cfg.typed_tokens = []
         hygiene_cfg.patterns = []
+
+    pretok_cfg = pretokenize.default_pretokenizer_config()
+    pretok_cfg.enabled = args.pretokenizer != "none"
+    if not pretok_cfg.enabled:
+        pretok_cfg.patterns = []
+
     if hygiene_cfg.enabled:
         pairs = [(y, hygiene.apply_hygiene(x, hygiene_cfg)) for y, x in pairs]
+    if pretok_cfg.enabled:
+        pairs = [(y, pretokenize.apply_pretokenize(x, pretok_cfg)) for y, x in pairs]
 
     special = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
 
@@ -622,6 +635,7 @@ def main():
         "max_base_chars": args.max_base_chars,
         "text_key": args.text_key,
         "label_key": args.label_key,
+        "pretokenizer": args.pretokenizer,
     }
 
     build_args.update(
@@ -641,6 +655,7 @@ def main():
         build_args,
         emit_code=args.emit_code,
         hygiene_cfg=hygiene_cfg,
+        pretok_cfg=pretok_cfg,
         hygiene_metrics=hygiene.vocab_hygiene_metrics(vocab.keys(), hygiene_cfg.typed_tokens),
     )
 
