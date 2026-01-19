@@ -141,6 +141,13 @@ class HygieneConfig:
     version: str = "hygiene-v1"
     typed_tokens: List[str] = field(default_factory=list)
     patterns: List[HygienePattern] = field(default_factory=list)
+    _compiled: Optional[List[Tuple[Pattern[str], str]]] = field(default=None, init=False, repr=False)
+
+    def compiled_patterns(self) -> List[Tuple[Pattern[str], str]]:
+        """Compile regex patterns once and reuse across calls."""
+        if self._compiled is None:
+            self._compiled = [(p.compile(), p.replacement) for p in self.patterns]
+        return self._compiled
 
     def to_dict(self) -> Dict[str, object]:
         return {
