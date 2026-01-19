@@ -14,7 +14,7 @@ dependencies = ["transformers>=4.30", "datasets>=2.14", "tqdm>=4.66", "hydra-cor
 parquet = ["pyarrow>=12.0", "pandas>=1.5"]
 
 [project.scripts]
-ctok-build = "build_ctok_from_corpus:main"
+ctok-build = "ctok_core.build_ctok_from_corpus:main"
 
 [tool.setuptools]
-py-modules = ["build_ctok_from_corpus", "tokenization_ctok", "tokenization_ctok_fast", "hygiene", "build_ctok"]
+packages = ["ctok_core"]

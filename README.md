@@ -11,13 +11,21 @@ Transformers' `AutoTokenizer` expects this format for dynamic tokenizers on the 
 ```bash
 pip install -U transformers tokenizers
 
-bash demo_build_and_load.sh
+python ctok_core/build_ctok_from_corpus.py \
+  --corpus /path/to/train.parquet \
+  --format parquet \
+  --text_key text \
+  --label_key label \
+  --outdir ctok_http_8k
 ```
 
-## Build from Parquet
+## Build from Parquet (locked CLI)
+
+`ctok_core/build_ctok_from_corpus.py` auto-tunes performance and caches preprocessed text in
+`<outdir>/_ctok_preprocessed.jsonl.gz` + `<outdir>/_ctok_preprocessed.meta.json` (delete to rebuild).
 
 ```bash
-python build_ctok_from_corpus.py \
+python ctok_core/build_ctok_from_corpus.py \
   --corpus /path/to/train.parquet \
   --format parquet \
   --text_key text \
@@ -44,7 +52,7 @@ tok = AutoTokenizer.from_pretrained("./ctok_http_8k", trust_remote_code=True)
 Notes:
 - Runtime is **fast** because the artifact includes `tokenizer.json` built with `tokenizers` (Rust).
 - Segmentation is greedy longest-match (WordPiece) with `continuing_subword_prefix=""`.
-- The tokenizer requires `ctok_meta.json` (co-located with `tokenizer.json`/`vocab.json`) to keep the build-time hygiene + pre-tokenizer pipeline locked at runtime.
+- `ctok_meta.json` (co-located with `tokenizer.json`/`vocab.json`) locks hygiene + pre-tokenizer config and records build metrics.
 
 ## Experiments
 
@@ -66,10 +74,11 @@ python run_ctok_experiment.py \
   --emit_code \
   --pretokenizer generic \
   --no_boundary_ends
+```
 By default, this builds directly from the HF dataset (no jsonl export). If you want to export and reuse a jsonl
 corpus, add `--write_corpus` (and use `--force_corpus` to rebuild an existing corpus).
 
-Common build knobs:
+Common build knobs (HF dataset path via `run_ctok_experiment.py`):
 - `--max_chars_per_sample` limits per-sample scan length (default 4096)
 - `--boundaries` controls token boundary characters
 - `--no_boundary_ends` disables adding boundary-prefixed/suffixed tokens
@@ -78,6 +87,7 @@ Common build knobs:
 - `--pretokenizer generic` enables structure-aware pre-tokenization (HTML/HTTP-friendly)
 - `--junk_penalty_beta` penalizes high-entropy/value-like fragments (default 0.5)
 - `--lowercase` lowercases text before hygiene/pretokenization (off by default)
+- `--candidate_prefilter_samples`/`--candidate_prefilter_min_freq` optionally shrink the candidate set on huge corpora
 - `--mp_chunksize` increases multiprocessing task size to reduce scheduling overhead (default 16)
 - `--mp_chunk_factor` controls chunks per worker; lower values mean larger chunks (default 1)
 - `--mp_chunk_chars` splits candidate-collection chunks by character budget (0 = disabled)
@@ -130,6 +140,7 @@ Use `value_randomization_eval=true` to run a simple robustness check that random
 high-cardinality values in the eval split.
 
 CTok hygiene (default on) replaces high-cardinality values with typed tokens (e.g., `__IPV4__`, `__UUID__`) at build
-and runtime, and logs hygiene metrics in `ctok_meta.json`. You can disable it with `--no_hygiene` and control
+and runtime, and logs hygiene metrics in `ctok_meta.json`. It also normalizes standalone numbers to `__NUM3__`,
+`__NUM4__`, or `__NUM5P__` (except common HTTP codes/ports). You can disable it with `--no_hygiene` and control
 candidate filtering with `--no_filter_value_fragments`, `--min_doc_freq`, and `--max_doc_concentration`. The
 default filter also treats long pure-numeric strings as value fragments to keep vocab focused on structure.
