@@ -22,15 +22,6 @@ class PreTokenizerConfig:
     version: str = "pretokenize-v1"
     patterns: List[PreTokenizePattern] = field(default_factory=list)
 
-    # Lazily-compiled regex cache. Not serialized.
-    _compiled: List[tuple[Pattern[str], str]] | None = field(default=None, init=False, repr=False)
-
-    def compiled_patterns(self) -> List[tuple[Pattern[str], str]]:
-        """Return cached compiled patterns as (regex, replacement)."""
-        if self._compiled is None:
-            self._compiled = [(p.compile(), p.replacement) for p in self.patterns]
-        return self._compiled
-
     def to_dict(self) -> Dict[str, object]:
         return {
             "enabled": self.enabled,
@@ -111,6 +102,6 @@ def apply_pretokenize(text: str, cfg: PreTokenizerConfig) -> str:
     if not cfg.enabled:
         return text
     out = text
-    for rx, repl in cfg.compiled_patterns():
-        out = rx.sub(repl, out)
+    for p in cfg.patterns:
+        out = p.compile().sub(p.replacement, out)
     return out
