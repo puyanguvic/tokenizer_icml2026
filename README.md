@@ -1,146 +1,52 @@
-# CTok Fast Tokenizer (final)
+# ctoken (merged trainer + artifact builder)
 
-This package builds a **fast** CTok tokenizer artifact from a corpus and loads it via Transformers.
+This package standardizes CTok training inputs to **Parquet** and provides a **pluggable preprocessing layer** that maps dataset-specific schemas (e.g., WAF HTTP fields) into a single `text` column suitable for tokenizer training. It also ships the **Unigram artifact builder** so no separate `ctok_core` directory is needed.
 
-## Why this fixes your error
-`tokenizer_config.json` uses `auto_map` as a **2-tuple/list**: `[slow_ref, fast_ref]`.
-Transformers' `AutoTokenizer` expects this format for dynamic tokenizers on the Hub. See HF discussion. 
+## What you get
+- Parquet-only ingestion (`ctoken.io.parquet`)
+- Preprocess registry (`ctoken.preprocess.registry`) + WAF schema preprocessor (`waf_http_v2`)
+- Built-in Unigram artifact builder that outputs a standard HF `tokenizer.json` (no `trust_remote_code`)
+- A CLI that:
+  1) Converts raw parquet -> aligned parquet with `text` (and `label`)
+  2) Trains and exports a tokenizer artifact
 
-## Quickstart
+## Install
 
-```bash
-pip install -U transformers tokenizers
-
-python ctok_core/build_ctok_from_corpus.py \
-  --corpus /path/to/train.parquet \
-  --format parquet \
-  --text_key text \
-  --label_key label \
-  --outdir ctok_http_8k
-```
-
-## Build from Parquet (locked CLI)
-
-`ctok_core/build_ctok_from_corpus.py` auto-tunes performance and caches preprocessed text in
-`<outdir>/_ctok_preprocessed.jsonl.gz` + `<outdir>/_ctok_preprocessed.meta.json` (delete to rebuild).
+From the directory containing this repo:
 
 ```bash
-python ctok_core/build_ctok_from_corpus.py \
-  --corpus /path/to/train.parquet \
-  --format parquet \
-  --text_key text \
-  --label_key label \
-  --outdir ctok_http_8k \
-  --vocab_size 8192 \
-  --max_len 12 \
-  --min_freq 50 \
-  --pretokenizer generic \
-  --no_boundary_ends \
-  --semantic_mode mi --lambda_sem 50.0 \
-  --use_ascii_base \
-  --emit_code
+pip install -e .
 ```
 
-Load:
+## Demo (WAF dataset)
+
+1) Download `train.parquet` from HF (or use a local parquet file with columns: `method,url,protocol,headers,body,label`).
+2) Run:
+
+```bash
+python -m ctoken.cli \
+  --src_parquet /path/to/train.parquet \
+  --preprocess waf_http_v2 \
+  --work_parquet ./_work/aligned_waf_train.parquet \
+  --outdir ./ctoken_waf_unigram_2048 \
+  --vocab_size 2048 \
+  --model_max_length 512 \
+  --max_len 16 \
+  --sample_words 200000 \
+  --prune_iters 4 \
+  --prune_frac 0.20 \
+  --num_workers 0
+```
+
+Then validate:
 
 ```python
 from transformers import AutoTokenizer
 
-tok = AutoTokenizer.from_pretrained("./ctok_http_8k", trust_remote_code=True)
+tok = AutoTokenizer.from_pretrained("./ctoken_waf_unigram_2048")
+print(type(tok.backend_tokenizer))
+print(tok.backend_tokenizer.pre_tokenizer.pre_tokenize_str("GET /a.php?id=1&x=../etc/passwd HTTP/1.1"))
 ```
 
-Notes:
-- Runtime is **fast** because the artifact includes `tokenizer.json` built with `tokenizers` (Rust).
-- Segmentation is greedy longest-match (WordPiece) with `continuing_subword_prefix=""`.
-- `ctok_meta.json` (co-located with `tokenizer.json`/`vocab.json`) locks hygiene + pre-tokenizer config and records build metrics.
-
-## Experiments
-
-Experiment 1: build CTok tokenizer from dataset (see `run_ctok_experiment.py` or `run_ctok_experiment_hydra.py`).
-```bash
-python run_ctok_experiment_hydra.py \
-  dataset=logfit-project/HDFS_v1 \
-  semantic_mode=mi \
-  lambda_sem=50.0 \
-  use_ascii_base=true \
-  emit_code=true \
-  pretokenizer=generic \
-  no_boundary_ends=true
-python run_ctok_experiment.py \
-  --dataset logfit-project/HDFS_v1 \
-  --semantic_mode mi \
-  --lambda_sem 50.0 \
-  --use_ascii_base \
-  --emit_code \
-  --pretokenizer generic \
-  --no_boundary_ends
-```
-By default, this builds directly from the HF dataset (no jsonl export). If you want to export and reuse a jsonl
-corpus, add `--write_corpus` (and use `--force_corpus` to rebuild an existing corpus).
-
-Common build knobs (HF dataset path via `run_ctok_experiment.py`):
-- `--max_chars_per_sample` limits per-sample scan length (default 4096)
-- `--boundaries` controls token boundary characters
-- `--no_boundary_ends` disables adding boundary-prefixed/suffixed tokens
-- `--max_base_chars` caps the base character set size
-- `--base_chars_max_samples` limits how many samples are scanned for base chars (default 200000)
-- `--pretokenizer generic` enables structure-aware pre-tokenization (HTML/HTTP-friendly)
-- `--junk_penalty_beta` penalizes high-entropy/value-like fragments (default 0.5)
-- `--lowercase` lowercases text before hygiene/pretokenization (off by default)
-- `--candidate_prefilter_samples`/`--candidate_prefilter_min_freq` optionally shrink the candidate set on huge corpora
-- `--mp_chunksize` increases multiprocessing task size to reduce scheduling overhead (default 16)
-- `--mp_chunk_factor` controls chunks per worker; lower values mean larger chunks (default 1)
-- `--mp_chunk_chars` splits candidate-collection chunks by character budget (0 = disabled)
-
-Performance tips for large corpora:
-- Prefer direct HF dataset builds (default) to avoid Arrow->jsonl conversion.
-- Set `--num_workers 0` to auto-use all cores (used by candidate collection and doc stats).
-- Use `--max_samples` or `--sample_ratio` for quick iterations.
-- Tighten `--max_chars_per_sample` to reduce scanning cost on long log lines.
-
-Common command patterns:
-```bash
-# Fast smoke test (small sample, fewer workers)
-python run_ctok_experiment.py \
-  --dataset logfit-project/HDFS_v1 \
-  --max_samples 50000 \
-  --num_workers 4 \
-  --pretokenizer generic \
-  --use_ascii_base
-
-# Full build with MI and all cores
-python run_ctok_experiment.py \
-  --dataset logfit-project/HDFS_v1 \
-  --semantic_mode mi \
-  --lambda_sem 50.0 \
-  --num_workers 0 \
-  --pretokenizer generic \
-  --use_ascii_base
-
-# Export and reuse jsonl corpus on disk
-python run_ctok_experiment.py \
-  --dataset logfit-project/HDFS_v1 \
-  --write_corpus \
-  --force_corpus
-```
-
-Experiment 2: fine-tune a classifier using a CTok tokenizer with a BERT model
-(see `run_ctok_experiment2.py` or `run_ctok_experiment2_hydra.py`).
-```bash
-python run_ctok_experiment2_hydra.py \
-  dataset=logfit-project/HDFS_v1 \
-  tokenizer_path=tokenizers/logfit-project__HDFS_v1_train \
-  model_name=google/bert_uncased_L-4_H-256_A-4
-python run_ctok_experiment2.py \
-  --dataset logfit-project/HDFS_v1 \
-  --tokenizer_path tokenizers/logfit-project__HDFS_v1_train \
-  --model_name google/bert_uncased_L-4_H-256_A-4
-```
-Use `value_randomization_eval=true` to run a simple robustness check that randomizes
-high-cardinality values in the eval split.
-
-CTok hygiene (default on) replaces high-cardinality values with typed tokens (e.g., `__IPV4__`, `__UUID__`) at build
-and runtime, and logs hygiene metrics in `ctok_meta.json`. It also normalizes standalone numbers to `__NUM3__`,
-`__NUM4__`, or `__NUM5P__` (except common HTTP codes/ports). You can disable it with `--no_hygiene` and control
-candidate filtering with `--no_filter_value_fragments`, `--min_doc_freq`, and `--max_doc_concentration`. The
-default filter also treats long pure-numeric strings as value fragments to keep vocab focused on structure.
+## Add a new dataset schema
+Create `ctoken/preprocess/<name>.py` and register a preprocessor with `@register(PreprocessSpec(...))`.
