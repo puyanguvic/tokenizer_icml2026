@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from ctoken.io.parquet import ParquetSource, iter_record_batches
@@ -10,23 +12,61 @@ from ctoken.preprocess.registry import available as available_pre, get as get_pr
 from ctoken.train.unigram_builder import TrainArgs, run_unigram_builder
 
 
-def write_aligned_parquet(src_parquet: str, dst_parquet: str, preprocess: str, batch_size: int = 8192) -> None:
+def write_aligned_parquet(
+    src_parquet: str,
+    dst_parquet: str,
+    preprocess: str,
+    batch_size: int = 8192,
+    *,
+    show_progress: bool = False,
+    progress_interval: int = 100,
+) -> None:
     spec, fn = get_pre(preprocess)
 
     src = ParquetSource(path=src_parquet, columns=spec.required_columns, batch_size=batch_size)
 
+    total_rows = None
+    if show_progress:
+        try:
+            pf = pq.ParquetFile(src_parquet)
+            if pf.metadata is not None:
+                total_rows = pf.metadata.num_rows
+        except Exception:
+            total_rows = None
+
     writer = None
+    processed_rows = 0
+    batches = 0
     try:
         for batch in iter_record_batches(src):
             out_batch = fn(batch)
-            table = out_batch.to_table()
+            if isinstance(out_batch, pa.RecordBatch):
+                table = pa.Table.from_batches([out_batch])
+            else:
+                table = out_batch
             if writer is None:
                 Path(dst_parquet).parent.mkdir(parents=True, exist_ok=True)
                 writer = pq.ParquetWriter(dst_parquet, table.schema, compression="zstd")
             writer.write_table(table)
+            processed_rows += batch.num_rows
+            batches += 1
+            if show_progress and (batches % max(progress_interval, 1) == 0):
+                if total_rows:
+                    pct = 100.0 * processed_rows / max(total_rows, 1)
+                    msg = f"[align] {processed_rows}/{total_rows} rows ({pct:5.1f}%)"
+                else:
+                    msg = f"[align] {processed_rows} rows"
+                print(msg, end="\r", file=sys.stderr, flush=True)
     finally:
         if writer is not None:
             writer.close()
+    if show_progress:
+        if total_rows:
+            pct = 100.0 * processed_rows / max(total_rows, 1)
+            msg = f"[align] {processed_rows}/{total_rows} rows ({pct:5.1f}%)"
+        else:
+            msg = f"[align] {processed_rows} rows"
+        print(msg, file=sys.stderr)
 
 
 def main() -> None:

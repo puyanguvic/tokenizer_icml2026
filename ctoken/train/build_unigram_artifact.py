@@ -123,12 +123,37 @@ def iter_parquet(path: str, max_samples: Optional[int], text_key: str, *, waf_jo
                 b = pc.fill_null(rb.column(4).cast(pa.string()), "")
 
                 # Element-wise concatenation in Arrow (avoids Python loops).
-                t1 = pc.binary_join_element_wise([pa.array(["<METHOD> "] * len(rb)), m, pa.array(["\n"] * len(rb))], "")
-                t2 = pc.binary_join_element_wise([pa.array(["<URL> "] * len(rb)), u, pa.array(["\n"] * len(rb))], "")
-                t3 = pc.binary_join_element_wise([pa.array(["<PROT> "] * len(rb)), p, pa.array(["\n"] * len(rb))], "")
-                t4 = pc.binary_join_element_wise([pa.array(["<HDR>\n"] * len(rb)), h, pa.array(["\n"] * len(rb))], "")
-                t5 = pc.binary_join_element_wise([pa.array(["<BODY>\n"] * len(rb)), b, pa.array(["\n"] * len(rb))], "")
-                text_arr = pc.binary_join_element_wise([t1, t2, t3, t4, t5], "")
+                t1 = pc.binary_join_element_wise(
+                    pa.array(["<METHOD> "] * len(rb)),
+                    m,
+                    pa.array(["\n"] * len(rb)),
+                    "",
+                )
+                t2 = pc.binary_join_element_wise(
+                    pa.array(["<URL> "] * len(rb)),
+                    u,
+                    pa.array(["\n"] * len(rb)),
+                    "",
+                )
+                t3 = pc.binary_join_element_wise(
+                    pa.array(["<PROT> "] * len(rb)),
+                    p,
+                    pa.array(["\n"] * len(rb)),
+                    "",
+                )
+                t4 = pc.binary_join_element_wise(
+                    pa.array(["<HDR>\n"] * len(rb)),
+                    h,
+                    pa.array(["\n"] * len(rb)),
+                    "",
+                )
+                t5 = pc.binary_join_element_wise(
+                    pa.array(["<BODY>\n"] * len(rb)),
+                    b,
+                    pa.array(["\n"] * len(rb)),
+                    "",
+                )
+                text_arr = pc.binary_join_element_wise(t1, t2, t3, t4, t5, "")
 
                 for x in text_arr.to_pylist():
                     if not x:

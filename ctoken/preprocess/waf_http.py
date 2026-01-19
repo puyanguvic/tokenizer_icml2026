@@ -25,6 +25,10 @@ def preprocess_waf_http_v2(batch: pa.RecordBatch) -> pa.RecordBatch:
 
     Output columns: text, label
     """
+    num_rows = batch.num_rows
+
+    def const_str(value: str) -> pa.Array:
+        return pa.array([value] * num_rows, type=pa.string())
 
     def col(name: str) -> pa.Array:
         return _fill_str(batch.column(batch.schema.get_field_index(name)))
@@ -37,17 +41,20 @@ def preprocess_waf_http_v2(batch: pa.RecordBatch) -> pa.RecordBatch:
     label = col("label")
 
     # Element-wise concat in Arrow/C++ (fast). Keep structure to help tokenizer.
-    parts = [
-        pc.add(pc.add("<METHOD> ", method), "\n"),
-        pc.add(pc.add("<URL> ", url), "\n"),
-        pc.add(pc.add("<PROT> ", proto), "\n"),
-        pc.add("<HDR>\n", headers),
-        "\n",
-        pc.add("<BODY>\n", body),
-        "\n",
-    ]
-
-    text = pc.binary_join_element_wise(parts, "")
+    text = pc.binary_join_element_wise(
+        const_str("<METHOD> "),
+        method,
+        const_str("\n<URL> "),
+        url,
+        const_str("\n<PROT> "),
+        proto,
+        const_str("\n<HDR>\n"),
+        headers,
+        const_str("\n<BODY>\n"),
+        body,
+        const_str("\n"),
+        "",
+    )
 
     out = pa.RecordBatch.from_arrays(
         [pa.array(text, type=pa.string()), pa.array(label, type=pa.string())],
