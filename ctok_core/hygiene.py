@@ -143,10 +143,10 @@ class HygieneConfig:
     patterns: List[HygienePattern] = field(default_factory=list)
 
     # Lazily-compiled regex cache. Not serialized.
-    _compiled: Optional[List[tuple[Pattern[str], str]]] = field(default=None, init=False, repr=False)
+    _compiled: Optional[List[Tuple[Pattern[str], str]]] = field(default=None, init=False, repr=False)
 
-    def compiled_patterns(self) -> List[tuple[Pattern[str], str]]:
-        """Return cached compiled patterns as (regex, replacement)."""
+    def compiled_patterns(self) -> List[Tuple[Pattern[str], str]]:
+        """Return cached compiled patterns as (regex, replacement) pairs."""
         if self._compiled is None:
             self._compiled = [(p.compile(), p.replacement) for p in self.patterns]
         return self._compiled
@@ -236,8 +236,9 @@ def apply_hygiene(text: str, cfg: HygieneConfig) -> str:
     if not cfg.enabled:
         return text
     out = text
-    for rx, repl in cfg.compiled_patterns():
-        out = rx.sub(repl, out)
+    # Use cached compiled patterns (significant speedup on large corpora).
+    for regex, repl in cfg.compiled_patterns():
+        out = regex.sub(repl, out)
     out = normalize_numbers(out)
     return out
 
