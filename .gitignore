@@ -8,6 +8,9 @@ dist/
 # Virtual environments
 .venv/
 .pytest_cache/
+datasets/*
+!datasets/README.md
+!datasets/loader.py
 datasets/hf_cache/
 datasets/corpus/
 datasets/cache/
