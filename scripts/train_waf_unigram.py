@@ -13,6 +13,9 @@ from typing import Callable, Dict, Iterable, Mapping, Optional
 
 
 SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
+AUTO_VOCAB_GROWTH_FACTOR = 2.0
+AUTO_VOCAB_MIN_INCREMENT = 2048
+AUTO_VOCAB_MAX_GROWTHS = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -262,6 +265,15 @@ def _build_attempts(args: argparse.Namespace) -> list[argparse.Namespace]:
     return attempts
 
 
+def _attempt_signature(args: argparse.Namespace) -> tuple[int, Optional[int], Optional[int], bool, bool]:
+    return (args.vocab_size, args.max_chars, args.max_samples, args.ascii_only, args.streaming)
+
+
+def _next_vocab_size(current: int) -> int:
+    grown = int(current * AUTO_VOCAB_GROWTH_FACTOR)
+    return max(current + AUTO_VOCAB_MIN_INCREMENT, grown)
+
+
 def _args_to_cli(args: argparse.Namespace) -> list[str]:
     cmd = ["--dataset", args.dataset, "--split", args.split]
     if args.max_samples is not None:
@@ -410,11 +422,17 @@ def train_once(args: argparse.Namespace) -> None:
 
 def run_with_auto_retry(args: argparse.Namespace) -> None:
     attempts = _build_attempts(args)
-    total = len(attempts)
+    queue = list(attempts)
+    seen = {_attempt_signature(attempt) for attempt in queue}
     script_path = Path(__file__).resolve()
     last_code = None
+    growths = 0
+    idx = 0
 
-    for idx, attempt in enumerate(attempts, 1):
+    while queue:
+        attempt = queue.pop(0)
+        idx += 1
+        total = idx + len(queue)
         desc = _describe_attempt(args, attempt)
         print(f"[auto] Attempt {idx}/{total}: {desc}")
         cmd = [sys.executable, str(script_path), *_args_to_cli(attempt), "--_single_run"]
@@ -422,8 +440,22 @@ def run_with_auto_retry(args: argparse.Namespace) -> None:
         last_code = proc.returncode
         if proc.returncode == 0:
             return
-        if proc.returncode == 64 and not attempt.ascii_only:
-            print("[auto] vocab_size too small; will try with --ascii_only.")
+        if proc.returncode == 64:
+            if growths < AUTO_VOCAB_MAX_GROWTHS:
+                next_vocab = _next_vocab_size(attempt.vocab_size)
+                if next_vocab > attempt.vocab_size:
+                    grown_attempt = _clone_args(attempt, vocab_size=next_vocab)
+                    sig = _attempt_signature(grown_attempt)
+                    if sig not in seen:
+                        seen.add(sig)
+                        queue.insert(0, grown_attempt)
+                        growths += 1
+                        print(
+                            f"[auto] vocab_size too small; will try with --vocab_size {next_vocab}."
+                        )
+                        continue
+            if not attempt.ascii_only:
+                print("[auto] vocab_size too small; will try with --ascii_only.")
 
     if last_code == 64:
         raise SystemExit(
