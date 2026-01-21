@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--split", default="train", help="Dataset split to use.")
     ap.add_argument("--max_samples", type=int, default=None, help="Optional cap on number of rows.")
-    ap.add_argument("--vocab_size", type=int, default=2048)
+    ap.add_argument("--vocab_size", type=int, default=8192)
     ap.add_argument("--model_max_length", type=int, default=512)
     ap.add_argument("--max_piece_length", type=int, default=16, help="Unigram max piece length.")
     ap.add_argument(

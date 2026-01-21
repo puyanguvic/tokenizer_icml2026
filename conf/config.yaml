@@ -6,7 +6,7 @@ train:
   algorithm: unigram
   split: train
   max_samples: null
-  vocab_size: 2048
+  vocab_size: 8192
   model_max_length: 512
   max_piece_length: 16
   wordpiece_max_input_chars: 100

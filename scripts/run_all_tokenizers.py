@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 
-ALGORITHMS = ("unigram", "bpe", "wordpiece")
+ALGORITHMS = ("bpe", "wordpiece", "unigram")
 DATASETS = ["hdfs", "phish_html", "phishing_email", "waf"]
 
 
@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Run all dataset tokenizer training jobs.")
     ap.add_argument(
         "--algorithms",
-        default="unigram,bpe,wordpiece",
+        default="bpe,wordpiece,unigram",
         help="Comma-separated list of algorithms to run.",
     )
     ap.add_argument("--verify", action="store_true", help="Verify each tokenizer after training.")
@@ -48,8 +48,8 @@ def main() -> None:
     script_path = Path(__file__).resolve().parent / "train_tokenizer_hydra.py"
     algorithms = _parse_algorithms(args.algorithms)
 
-    for name in DATASETS:
-        for algo in algorithms:
+    for algo in algorithms:
+        for name in DATASETS:
             cmd = [
                 sys.executable,
                 str(script_path),
