@@ -1,7 +1,7 @@
 from __future__ import annotations
 import argparse
-from .common import add_common_corpus_args, add_common_contract_args, load_contract_config
-from ..baselines.bpe_hygiene.trainer import train_bpe_hygiene
+from .common import add_common_corpus_args, add_common_contract_args, add_logging_args, setup_logging_from_args, load_contract_config
+from ..baselines.unigram_hygiene.trainer import train_unigram_hygiene
 
 def main():
     ap = argparse.ArgumentParser()
@@ -14,7 +14,7 @@ def main():
     args = ap.parse_args()
 
     cfg = load_contract_config(args)
-    train_bpe_hygiene(
+    train_unigram_hygiene(
         corpus=args.corpus,
         outdir=args.outdir,
         vocab_size=args.vocab_size,

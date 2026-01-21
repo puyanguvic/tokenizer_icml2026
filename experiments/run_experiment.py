@@ -8,12 +8,17 @@ from pathlib import Path
 from typing import Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Ensure src/ layout is importable when running from the repo checkout.
+SRC_ROOT = REPO_ROOT / 'src'
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from cit_tokenizers.contract import ContractConfig
+from cit_tokenizers.interface.contract import ContractConfig
 from cit_tokenizers.corpus import export_dataset_corpus, resolve_dataset_key, resolve_dataset_path
-from cit_tokenizers.data import iter_text
+from cit_tokenizers.io.data import iter_text
 from cit_tokenizers.cit.trainer import CITTrainer, CITTrainerConfig
 from cit_tokenizers.baselines.bpe_hygiene.trainer import train_bpe_hygiene
 from cit_tokenizers.baselines.wordpiece_hygiene.trainer import train_wordpiece_hygiene

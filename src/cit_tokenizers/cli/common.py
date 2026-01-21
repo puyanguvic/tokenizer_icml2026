@@ -1,6 +1,8 @@
 from __future__ import annotations
 import argparse, json, os
-from ..contract import ContractConfig
+from ..interface.contract import ContractConfig
+from ..utils.logging import configure_logging
+
 
 def add_common_corpus_args(p: argparse.ArgumentParser):
     p.add_argument("--corpus", required=True, help="Path to corpus file.")
@@ -25,3 +27,10 @@ def load_contract_config(args) -> ContractConfig:
         enable_numeric_buckets=not args.no_numeric_buckets,
         long_num_min_digits=int(args.long_num_min_digits),
     )
+
+
+def add_logging_args(p: argparse.ArgumentParser):
+    p.add_argument("--log-level", default=None, help="Logging level (e.g., INFO, DEBUG). Also respects CIT_LOG_LEVEL env var.")
+
+def setup_logging_from_args(args: argparse.Namespace) -> None:
+    configure_logging(args.log_level)

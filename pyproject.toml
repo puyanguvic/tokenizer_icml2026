@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cit-tokenizers"
-version = "0.3.0"
+version = "0.6.0"
 description = "CIT (Controlled Interface Tokenization) and parallel hygiene-aligned baselines (BPE/WordPiece/Unigram)."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -17,12 +17,49 @@ dependencies = [
   "tokenizers>=0.15",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "ruff>=0.5",
+  "mypy>=1.8",
+]
+
+# Optional helpers for `cit dataset pull`.
+hf = [
+  "datasets>=2.14",
+  "pyarrow>=12.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E203"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
 [project.scripts]
-cit-train-cit = "cit_tokenizers.cli.train_cit:main"
-cit-train-bpeh = "cit_tokenizers.cli.train_bpe_hygiene:main"
-cit-train-wordpieceh = "cit_tokenizers.cli.train_wordpiece_hygiene:main"
-cit-train-unigramh = "cit_tokenizers.cli.train_unigram_hygiene:main"
-cit-apply-contract = "cit_tokenizers.cli.apply_contract:main"
+cit = "cit_tokenizers.cli.main:main"
 
 [tool.setuptools]
-packages = ["cit_tokenizers"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+include = ["cit_tokenizers*"]

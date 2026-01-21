@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
 
-from ..contract import Contract, ContractConfig
+CIT_ARTIFACT_SCHEMA_VERSION = "cit_artifact.v1"
+
+from dataclasses import dataclass
+from typing import Dict, Any, List, Optional, Sequence
+
+from ..interface.contract import Contract, ContractConfig
 from .compiler import CompiledMatcher
 
 
@@ -12,6 +15,7 @@ from .compiler import CompiledMatcher
 class CITArtifact:
     """In-memory representation of a CIT tokenizer artifact."""
 
+    meta: Dict[str, Any]
     vocab: Dict[str, int]
     matcher: CompiledMatcher
     contract: ContractConfig
@@ -27,6 +31,7 @@ class CITArtifact:
     def dumps(self) -> str:
         return json.dumps(
             {
+                "meta": self.meta,
                 "vocab": self.vocab,
                 "matcher": json.loads(self.matcher.to_json()),
                 "contract": self.contract.to_dict(),
@@ -38,7 +43,9 @@ class CITArtifact:
     @staticmethod
     def loads(s: str) -> "CITArtifact":
         obj = json.loads(s)
+        meta = obj.get("meta") or {"schema_version": CIT_ARTIFACT_SCHEMA_VERSION}
         return CITArtifact(
+            meta={str(k): v for k, v in meta.items()},
             vocab={str(k): int(v) for k, v in obj["vocab"].items()},
             matcher=CompiledMatcher.from_json(json.dumps(obj["matcher"], ensure_ascii=False)),
             contract=ContractConfig.from_dict(obj["contract"]),

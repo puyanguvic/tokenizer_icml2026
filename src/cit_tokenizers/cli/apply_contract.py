@@ -1,8 +1,8 @@
 from __future__ import annotations
 import argparse, sys, json
-from .common import add_common_corpus_args, add_common_contract_args, load_contract_config
+from .common import add_common_corpus_args, add_common_contract_args, add_logging_args, setup_logging_from_args, load_contract_config
 from ..data import iter_text
-from ..contract import Contract
+from ..interface.contract import Contract
 
 def main():
     ap = argparse.ArgumentParser()

@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 import math
 import random
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from ..contract import Contract, ContractConfig
+from ..config import CITBuildConfig, CITTrainerConfig
+from ..interface.contract import Contract, ContractConfig
 from .compiler import CompiledMatcher, compile_trie
 from .runtime import CITArtifact
 
@@ -35,40 +35,40 @@ def _boundary_preset(name: str) -> List[str]:
     raise ValueError(f"Unknown boundary preset '{name}'")
 
 
-@dataclass
-class CITTrainerConfig:
-    """Build configuration for CIT."""
+def _finalize_cfg(cfg: CITTrainerConfig) -> CITTrainerConfig:
+    """Fill preset-dependent defaults.
 
-    vocab_size: int = 8192
-    min_freq: int = 10
-    len_min: Optional[int] = None
-    len_max: int = 24
-    boundaries: Optional[List[str]] = None
-    preset: str = "default"
-    lambda_rd: float = 0.0
-    seed: int = 0
-    sample_texts: Optional[int] = 200_000
-    # Distortion proxy options
-    distortion_mode: str = "none"  # 'none' or 'boundary_penalty'
-    boundary_penalty: float = 1.0
-    include_char_vocab: Optional[bool] = None
-    symbol_ngram_min_len: int = 2
-    symbol_ngram_max_len: Optional[int] = None
-    # Contract
-    contract: ContractConfig = ContractConfig()
+    We keep this as a pure function so that the unified config schema remains a
+    simple dataclass without side-effecting __post_init__.
+    """
 
-    def __post_init__(self) -> None:
-        preset = (self.preset or "default").strip().lower()
-        if self.boundaries is None:
-            self.boundaries = _boundary_preset(preset)
-        if self.include_char_vocab is None:
-            self.include_char_vocab = preset in ("http", "waf")
-        if self.symbol_ngram_max_len is None:
-            self.symbol_ngram_max_len = 4 if preset in ("http", "waf") else 0
-        if self.len_min is None:
-            self.len_min = 1 if preset in ("http", "waf") else 2
-        if self.len_min < 1 or self.len_max < self.len_min:
-            raise ValueError("Invalid candidate length range")
+    preset = (cfg.preset or "default").strip().lower()
+    boundaries = cfg.boundaries if cfg.boundaries is not None else _boundary_preset(preset)
+    include_char_vocab = cfg.include_char_vocab if cfg.include_char_vocab is not None else preset in ("http", "waf")
+    symbol_ngram_max_len = cfg.symbol_ngram_max_len
+    if symbol_ngram_max_len is None:
+        symbol_ngram_max_len = 4 if preset in ("http", "waf") else 0
+    len_min = cfg.len_min
+    if len_min is None:
+        len_min = 1 if preset in ("http", "waf") else 2
+    if len_min < 1 or cfg.len_max < len_min:
+        raise ValueError("Invalid candidate length range")
+    return CITTrainerConfig(
+        vocab_size=cfg.vocab_size,
+        min_freq=cfg.min_freq,
+        len_min=len_min,
+        len_max=cfg.len_max,
+        boundaries=list(boundaries),
+        preset=cfg.preset,
+        lambda_rd=cfg.lambda_rd,
+        seed=cfg.seed,
+        sample_texts=cfg.sample_texts,
+        distortion_mode=cfg.distortion_mode,
+        boundary_penalty=cfg.boundary_penalty,
+        include_char_vocab=include_char_vocab,
+        symbol_ngram_min_len=cfg.symbol_ngram_min_len,
+        symbol_ngram_max_len=symbol_ngram_max_len,
+    )
 
 
 class CITTrainer:
@@ -84,10 +84,31 @@ class CITTrainer:
 
     SPECIAL_TOKENS: Sequence[str] = ("[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]")
 
-    def __init__(self, config: Optional[CITTrainerConfig] = None):
-        self.cfg = config or CITTrainerConfig()
+    def __init__(
+        self,
+        trainer_config: Optional[CITTrainerConfig] = None,
+        *,
+        contract_config: Optional[ContractConfig] = None,
+        build_config: Optional[CITBuildConfig] = None,
+    ):
+        """Create a trainer.
+
+        You can either pass (trainer_config, contract_config) directly, or pass
+        a unified :class:`~cit_tokenizers.config.CITBuildConfig`.
+        """
+
+        if build_config is not None:
+            trainer_config = build_config.trainer
+            contract_config = build_config.contract
+            self.build_config = build_config
+        else:
+            self.build_config = CITBuildConfig(
+                trainer=trainer_config or CITTrainerConfig(),
+                contract=contract_config or ContractConfig(),
+            )
+        self.cfg = _finalize_cfg(self.build_config.trainer)
         self._rng = random.Random(self.cfg.seed)
-        self._contract = Contract(self.cfg.contract)
+        self._contract = Contract(self.build_config.contract)
 
     # -------------------------
     # Public API
@@ -139,6 +160,11 @@ class CITTrainer:
         # 4) Compile matcher and write artifact
         matcher = compile_trie(vocab.items())
         art = CITArtifact(
+            meta={
+                "schema_version": "cit_artifact.v1",
+                "builder": "cit_tokenizers",
+                "build_config": self.build_config.to_dict(),
+            },
             vocab=vocab,
             matcher=matcher,
             contract=self._contract.config,

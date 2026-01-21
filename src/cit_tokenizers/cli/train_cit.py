@@ -1,6 +1,6 @@
 from __future__ import annotations
 import argparse
-from .common import add_common_corpus_args, add_common_contract_args, load_contract_config
+from .common import add_common_corpus_args, add_common_contract_args, add_logging_args, setup_logging_from_args, load_contract_config
 from ..cit.trainer import train_cit, CITTrainConfig
 
 def main():

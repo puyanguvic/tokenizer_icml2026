@@ -1,10 +1,8 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Optional, Dict, Any
-import os, json
-from ...contract import Contract, ContractConfig
-from ...data import iter_text
-from ...hf_artifact import save_hf_tokenizer
+import os
+from ...interface.contract import Contract, ContractConfig
+from ...io.data import iter_text
+from ...artifacts.hf_artifact import save_hf_tokenizer
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 
 def train_wordpiece_hygiene(
