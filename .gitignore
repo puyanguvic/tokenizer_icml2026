@@ -14,6 +14,8 @@ datasets/*
 datasets/hf_cache/
 datasets/corpus/
 datasets/cache/
+src/cit_tokenizers/io/cache/
+tokenizers/
 .env
 .ctok_env
 .hydra/
