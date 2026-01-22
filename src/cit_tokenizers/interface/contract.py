@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Iterable, Union
 import json
 
 from .json_serialize import serialize_json_record
-from .hygiene import apply_typed_hygiene
+from .hygiene import apply_typed_hygiene, apply_typed_hygiene_http
 
 @dataclass(frozen=True)
 class ContractConfig:
@@ -18,6 +18,8 @@ class ContractConfig:
 
     # Typed hygiene
     enable_numeric_buckets: bool = True
+    typed_hygiene_mode: str = "generic"  # 'generic' or 'http'
+    enable_version_token: bool = True
     long_num_min_digits: int = 6
 
     # Case normalization
@@ -86,11 +88,19 @@ class Contract:
 
         # Typed hygiene on strings
         if self.cfg.enable_typed_hygiene:
-            x = apply_typed_hygiene(
-                x,
-                enable_numeric_buckets=self.cfg.enable_numeric_buckets,
-                long_num_min_digits=self.cfg.long_num_min_digits,
-            )
+            if (self.cfg.typed_hygiene_mode or "generic").lower() in ("http", "waf"):
+                x = apply_typed_hygiene_http(
+                    x,
+                    enable_numeric_buckets=self.cfg.enable_numeric_buckets,
+                    long_num_min_digits=self.cfg.long_num_min_digits,
+                    enable_version_token=self.cfg.enable_version_token,
+                )
+            else:
+                x = apply_typed_hygiene(
+                    x,
+                    enable_numeric_buckets=self.cfg.enable_numeric_buckets,
+                    long_num_min_digits=self.cfg.long_num_min_digits,
+                )
 
         # Optional ASCII-only case normalization.
         if self.cfg.lowercase_mode == "ascii":
@@ -107,7 +117,7 @@ class Contract:
     def typed_symbols(self) -> list[str]:
         if not self.cfg.enable_typed_hygiene:
             return []
-        symbols = ["<UUID>", "<IPV6>", "<IPV4>", "<TS>", "<HASH>", "<HEX>", "<B64>", "<PORT>"]
+        symbols = ["<UUID>", "<IPV6>", "<IPV4>", "<TS>", "<HASH>", "<HEX>", "<B64>", "<PORT>", "<VER>"]
         if self.cfg.enable_numeric_buckets:
             start = max(0, self.cfg.long_num_min_digits - 1)
             symbols.extend([f"<NUM_POW10_{k}>" for k in range(start, 13)])

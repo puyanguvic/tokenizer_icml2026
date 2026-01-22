@@ -15,6 +15,55 @@ HASH_HEX_RE = re.compile(r"\b[0-9a-fA-F]{32,64}\b")
 HEX_BLOB_RE = re.compile(r"\b[0-9a-fA-F]{16,}\b")
 B64_RE = re.compile(r"\b(?:[A-Za-z0-9+/]{24,}={0,2})\b")
 
+
+# HTTP-aware patterns (reduce false positives like rv:92.0 in User-Agent)
+URL_AUTH_PORT_RE = re.compile(r"(?i)((?:(?:https?|wss?)://)?[A-Za-z0-9.-]+):([0-9]{1,5})(?=[/\s])")
+HOST_HEADER_PORT_RE = re.compile(r"(?im)^(Host:\s*[^:\s]+):([0-9]{1,5})\s*$")
+# Loose version number (e.g., 92.0, 1.1, 10.0.19045) – handled only in HTTP mode to avoid over-typing.
+VERSION_RE = re.compile(r"(?<!\d)(?:\d+\.){1,3}\d+(?!\d)")
+
+def apply_typed_hygiene_http(
+    text: str,
+    enable_numeric_buckets: bool = True,
+    long_num_min_digits: int = 6,
+    enable_version_token: bool = True,
+) -> str:
+    """HTTP-aware variant of :func:`apply_typed_hygiene`.
+
+    Differences vs generic:
+      * PORT is only typed in URL authority or Host header, avoiding false positives
+        such as 'rv:92.0' in User-Agent.
+      * Optionally types dotted version numbers as <VER>.
+    """
+    x = text
+    x = UUID_RE.sub("<UUID>", x)
+    x = IPV6_RE.sub("<IPV6>", x)
+    x = IPV4_RE.sub("<IPV4>", x)
+    x = ISO_TS_RE.sub("<TS>", x)
+    x = EPOCH_TS_RE.sub("<TS>", x)
+    x = HASH_HEX_RE.sub("<HASH>", x)
+    x = HEX_BLOB_RE.sub("<HEX>", x)
+    x = B64_RE.sub("<B64>", x)
+
+    if enable_version_token:
+        # Do NOT type versions inside already-typed symbols
+        x = VERSION_RE.sub("<VER>", x)
+
+    # ports: only in authority / Host header
+    x = URL_AUTH_PORT_RE.sub(lambda m: f"{m.group(1)}:<PORT>", x)
+    # Host header line (keeps colon)
+    x = HOST_HEADER_PORT_RE.sub(lambda m: f"{m.group(1)}:<PORT>", x)
+
+    if enable_numeric_buckets:
+        def repl(m):
+            s = m.group(0)
+            if s.startswith("<") and s.endswith(">"):
+                return s
+            return _bucket_long_int(s, long_num_min_digits)
+        x = LONG_NUM_RE.sub(repl, x)
+    return x
+
+
 LONG_NUM_RE = re.compile(r"\b\d+\b")
 
 def _bucket_long_int(s: str, min_digits: int) -> str:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 import math
 import random
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -10,6 +12,24 @@ from ..config import CITBuildConfig, CITTrainerConfig
 from ..interface.contract import Contract, ContractConfig
 from .compiler import CompiledMatcher, compile_trie
 from .runtime import CITArtifact
+
+
+
+TAG_RE = re.compile(r"<[A-Z][A-Z0-9_]{1,31}>")
+
+def _auto_special_tokens_http(texts: Sequence[str], *, min_freq: int = 1, max_tags: int = 64) -> List[str]:
+    """Auto-discover uppercase angle-bracket tags like <METHOD> and <URL>.
+
+    This keeps interface markers atomic even when '<' and '>' are boundaries.
+    We cap the number of discovered tags to avoid accidental blow-ups.
+    """
+    freq: Dict[str, int] = {}
+    for s in texts:
+        for m in TAG_RE.finditer(s):
+            t = m.group(0)
+            freq[t] = freq.get(t, 0) + 1
+    tags = [t for t, c in sorted(freq.items(), key=lambda kv: (-kv[1], kv[0])) if c >= min_freq]
+    return tags[:max_tags]
 
 
 def _is_boundary(ch: str, boundaries: Sequence[str]) -> bool:
@@ -130,6 +150,16 @@ class CITTrainer:
                 contract=contract_config or ContractConfig(),
             )
         self.cfg = _finalize_cfg(self.build_config.trainer)
+        # Preset-aware default: for HTTP/WAF-like domains, use HTTP-aware hygiene
+        # unless the user explicitly overrides typed_hygiene_mode.
+        if (self.cfg.preset or "default").strip().lower() in ("http", "waf"):
+            mode = getattr(self.build_config.contract, "typed_hygiene_mode", "generic") or "generic"
+            if str(mode).lower() in ("generic", ""):
+                self.build_config = replace(
+                    self.build_config,
+                    contract=replace(self.build_config.contract, typed_hygiene_mode="http"),
+                )
+
         self._rng = random.Random(self.cfg.seed)
         self._contract = Contract(self.build_config.contract)
 
@@ -166,6 +196,33 @@ class CITTrainer:
                 break
             proc.append(self._contract.apply(t))
 
+
+        # Auto-reserve contract-emitted typed symbols and common interface markers.
+        auto_special: List[str] = []
+        # typed symbols (<UUID>, <IPV4>, ...) should be atomic
+        auto_special.extend(self._contract.typed_symbols())
+        # contract separators should be atomic if present
+        ccfg = self._contract.config
+        for t in (ccfg.sep_token, ccfg.eol_token, ccfg.empty_token):
+            if t:
+                auto_special.append(t)
+
+        preset = (self.cfg.preset or "default").strip().lower()
+        if preset in ("http", "waf"):
+            # Auto-detect uppercase tags like <METHOD>, <URL>, <HDR>
+            auto_special.extend(_auto_special_tokens_http(proc, min_freq=max(1, self.cfg.min_freq), max_tags=64))
+
+        if additional_special_tokens is None:
+            additional_special_tokens = auto_special
+        else:
+            # prepend auto specials, preserving user-provided order and de-duping
+            merged: List[str] = []
+            seen = set()
+            for t in list(auto_special) + list(additional_special_tokens):
+                if t and t not in seen and t not in self.SPECIAL_TOKENS:
+                    merged.append(t)
+                    seen.add(t)
+            additional_special_tokens = merged
         # 2) Candidate extraction
         cand_freq = self._extract_candidates(proc)
 
