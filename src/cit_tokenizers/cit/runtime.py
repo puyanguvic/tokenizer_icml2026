@@ -73,3 +73,12 @@ class CITRuntime:
     def decode(self, ids: Sequence[int]) -> str:
         it = self.artifact.id_to_token
         return "".join(it[i] if 0 <= i < len(it) else "" for i in ids)
+
+def load_artifact(path: str | 'Path') -> CITArtifact:
+    """Load a CITArtifact from an artifact directory (containing cit_artifact.json) or a direct JSON path."""
+    from pathlib import Path
+    p = Path(path)
+    if p.is_dir():
+        p = p / 'cit_artifact.json'
+    s = p.read_text(encoding='utf-8')
+    return CITArtifact.loads(s)

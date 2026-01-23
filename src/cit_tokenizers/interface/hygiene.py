@@ -11,9 +11,9 @@ IPV6_RE = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){2,7}[0-9a-fA-F]{1,4}\b")
 PORT_RE = re.compile(r"(?<!\d):([0-9]{1,5})(?!\d)")
 ISO_TS_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?\b")
 EPOCH_TS_RE = re.compile(r"\b\d{10,13}\b")
-HASH_HEX_RE = re.compile(r"\b[0-9a-fA-F]{32,64}\b")
-HEX_BLOB_RE = re.compile(r"\b[0-9a-fA-F]{16,}\b")
-B64_RE = re.compile(r"\b(?:[A-Za-z0-9+/]{24,}={0,2})\b")
+HASH_HEX_RE = re.compile(r"(?i)(?<![0-9a-f])[0-9a-f]{32,64}(?![0-9a-f])")
+HEX_BLOB_RE = re.compile(r"(?i)(?<![0-9a-f])[0-9a-f]{16,}(?![0-9a-f])")
+B64_RE = re.compile(r"(?<![A-Za-z0-9+/])(?:[A-Za-z0-9+/]{24,}={0,2})(?![A-Za-z0-9+/])")
 
 # Percent-encoding triplets in URLs / payloads.
 # We normalize to uppercase and insert a boundary after each triplet when it is

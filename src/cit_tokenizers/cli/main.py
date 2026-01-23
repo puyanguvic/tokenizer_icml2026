@@ -10,6 +10,7 @@ from ..io.data import iter_text
 from ..utils.logging import configure_logging
 from ..cit.trainer import CITTrainer
 from ..cit.validate import validate_artifact
+from ..cit.runtime import load_artifact
 from ..baselines.bpe_hygiene.trainer import train_bpe_hygiene
 from ..baselines.wordpiece_hygiene.trainer import train_wordpiece_hygiene
 from ..baselines.unigram_hygiene.trainer import train_unigram_hygiene
@@ -107,7 +108,19 @@ def cmd_train_cit(args: argparse.Namespace) -> None:
 
 def cmd_validate(args: argparse.Namespace) -> None:
     configure_logging(args.log_level)
-    issues = validate_artifact(Path(args.artifact_dir))
+
+    art = load_artifact(Path(args.artifact_dir))
+    contract = Contract(art.contract)
+    typed_symbols = contract.typed_symbols()
+
+    issues = validate_artifact(
+        art,
+        typed_symbols,
+        max_long_hex_fraction=args.max_long_hex_fraction,
+        max_long_hex_count=args.max_long_hex_count,
+        max_b64_fraction=args.max_b64_fraction,
+        max_b64_count=args.max_b64_count,
+    )
     if issues:
         for iss in issues:
             print(f"[FAIL] {iss.code}: {iss.message}")
@@ -232,7 +245,11 @@ def build_parser() -> argparse.ArgumentParser:
     # Validate
     val = sub.add_parser("validate", help="Validate an artifact directory")
     val.add_argument("--artifact-dir", required=True)
-    val.set_defaults(func=cmd_validate)
+        val.add_argument("--max-long-hex-fraction", type=float, default=0.005, help="Fail if long-hex tokens exceed this fraction of vocab.")
+    val.add_argument("--max-long-hex-count", type=int, default=32, help="Fail if long-hex tokens exceed this absolute count.")
+    val.add_argument("--max-b64-fraction", type=float, default=0.002, help="Fail if base64-like tokens exceed this fraction of vocab.")
+    val.add_argument("--max-b64-count", type=int, default=16, help="Fail if base64-like tokens exceed this absolute count.")
+val.set_defaults(func=cmd_validate)
 
     # Export
     exp = sub.add_parser("export-hf", help="Export a CIT artifact as an HF-style folder")
