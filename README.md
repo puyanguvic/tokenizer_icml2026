@@ -25,13 +25,58 @@ pip install -e .
 cit train cit --corpus path/to/corpus.txt --outdir tokenizers/cit_demo --vocab-size 8192 --preset waf
 ```
 
-2) Load with Hugging Face:
+2) Load with Transformers:
 
 ```python
-from cit_tokenizers.tokenization_cit import CITTokenizer
+from cit_tokenizers import CITTokenizer
 tok = CITTokenizer.from_pretrained("tokenizers/cit_demo")
 print(tok.tokenize("GET /index.html?x=1 HTTP/1.1"))
 ```
+
+Note: `CITTokenizer` loads data-only artifacts without `trust_remote_code`; `AutoTokenizer.from_pretrained(...)` is not supported.
+
+## Train a CIT tokenizer
+
+Example (WAF corpus):
+
+```bash
+cit train cit \
+  --preset waf \
+  --corpus datasets/corpus/puyang2025__waf_data_v2_train.jsonl \
+  --text-key text \
+  --outdir tokenizers/waf_cit_tokenizer \
+  --vocab-size 8192 \
+  --min-freq 10 \
+  --seed 0
+```
+
+Common arguments:
+
+- `--corpus`: Path to corpus file (required).
+- `--format`: Corpus format: `txt`, `jsonl`, or `parquet` (default: `txt`).
+- `--text-key`: Text field for `jsonl`/`parquet` (default: `text`).
+- `--max-samples`: Optional cap on samples read from the corpus.
+- `--outdir`: Output artifact directory (required).
+- `--vocab-size`: Target vocabulary size (default: `8192`).
+- `--min-freq`: Minimum token frequency (default: `10`).
+- `--preset`: Domain preset: `default`, `http`, or `waf` (default: `default`).
+- `--seed`: RNG seed (default: `0`).
+- `--lambda-rd`: Regularization strength for candidate scoring (default: `0.0`).
+- `--distortion-mode`: Distortion proxy: `none` or `boundary_penalty` (default: `none`).
+- `--boundary-penalty`: Penalty scalar for `boundary_penalty` mode (default: `1.0`).
+- `--config`: Path to a `CITBuildConfig` JSON file (overrides per-flag trainer/contract).
+
+Contract options:
+
+- `--contract-json`: Path to a `ContractConfig` JSON file.
+- `--no-json-serialization`: Disable JSON role-aware serialization.
+- `--no-typed-hygiene`: Disable typed hygiene.
+- `--no-numeric-buckets`: Disable numeric bucket tokens.
+- `--long-num-min-digits`: Minimum digit count for long-number buckets (default: `6`).
+
+Global:
+
+- `--log-level`: Logging level (e.g., `INFO`, `DEBUG`).
 
 ## Package layout (v0.7.0)
 
@@ -56,7 +101,7 @@ cit export-hf \
 Load:
 
 ```python
-from cit_tokenizers.tokenization_cit import CITTokenizer
+from cit_tokenizers import CITTokenizer
 tok = CITTokenizer.from_pretrained("tokenizers/cit_demo_hf")
 ```
 
