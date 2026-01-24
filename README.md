@@ -106,6 +106,33 @@ cit clean \
   --out datasets/corpus/puyang2025__waf_data_v2_train_struct_cookiekeys.jsonl
 ```
 
+## Verify a trained tokenizer (sample 5)
+
+After training, load the artifact and tokenize a few samples from the corpus (match `fmt`/`text_key` and `clean` to your training flags):
+
+```bash
+python - <<'PY'
+from cit_tokenizers import CITTokenizer
+from cit_tokenizers.io.data import iter_text
+
+tok = CITTokenizer.from_pretrained("tokenizers/waf_cit_tokenizer_struct")
+
+for i, text in enumerate(
+    iter_text(
+        "datasets/corpus/puyang2025__waf_data_v2_train.jsonl",
+        fmt="jsonl",
+        text_key="text",
+        max_samples=5,
+        clean=True,
+    ),
+    1,
+):
+    print(f"--- sample {i} ---")
+    print(text)
+    print(tok.tokenize(text))
+PY
+```
+
 Common arguments:
 
 - `--corpus`: Path to corpus file (required).
