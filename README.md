@@ -163,6 +163,55 @@ Global:
 
 - `--log-level`: Logging level (e.g., `INFO`, `DEBUG`).
 
+## External Hygiene + HF fast tokenizer (production)
+
+Online path:
+
+```
+raw HTTP -> hygiene.normalize() -> hf_tokenizer.encode()
+```
+
+Artifacts:
+
+- **Hygiene artifact**: `hygiene_artifact.json` (ContractConfig + versions).
+- **HF tokenizer artifact**: standard HF files (`tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`).
+
+HF tokenizer contains:
+
+- Special tokens (e.g., `<METHOD>`, `<URL_RAW>`, `<URL_DEC1>`, `<HAS_CRLF>`, `<HEX>`).
+- Model params + vocab for BPE/WordPiece/Unigram.
+- Post-processor (e.g., CLS/SEP) in `tokenizer.json`.
+
+Train a baseline with external hygiene:
+
+```bash
+cit train wordpieceh \
+  --corpus datasets/corpus/puyang2025__waf_data_v2_train.jsonl \
+  --text-key text \
+  --outdir tokenizers/waf_wordpieceh_v1 \
+  --hygiene-outdir hygiene/waf_hyg_v1 \
+  --version v1 \
+  --vocab-size 8192 \
+  --min-freq 10
+```
+
+Runtime usage:
+
+```python
+from cit_tokenizers.hygiene import load_hygiene_runtime, load_tokenizer_config, assert_version_binding
+from transformers import AutoTokenizer
+
+hyg = load_hygiene_runtime("hygiene/waf_hyg_v1")
+tok = AutoTokenizer.from_pretrained("tokenizers/waf_wordpieceh_v1", use_fast=True)
+assert_version_binding(hyg.artifact, load_tokenizer_config("tokenizers/waf_wordpieceh_v1"))
+
+ids = tok.encode(hyg.normalize(raw_http))
+```
+
+Notes:
+- When `--hygiene-outdir` is set, `--tokenizer-version`/`--hygiene-version` (or `--version`) are required.
+- Use `--emit-contract` if you also want `cit_contract.json` in the tokenizer dir for legacy tooling.
+
 ## Package layout (v0.7.0)
 
 The library is structured as a small, production-oriented SDK:

@@ -21,6 +21,8 @@ def save_hf_tokenizer(
     model_max_length: int = 512,
     special_tokens: Optional[Dict[str, str]] = None,
     extra_config: Optional[Dict[str, Any]] = None,
+    tokenizer_version: Optional[str] = None,
+    hygiene_version: Optional[str] = None,
 ) -> None:
     """Save a `tokenizers.Tokenizer` as a directory loadable by `transformers.AutoTokenizer`.
 
@@ -43,6 +45,10 @@ def save_hf_tokenizer(
         "padding_side": "right",
         "truncation_side": "right",
     }
+    if tokenizer_version is not None:
+        tok_cfg["tokenizer_version"] = str(tokenizer_version)
+    if hygiene_version is not None:
+        tok_cfg["hygiene_version"] = str(hygiene_version)
     if extra_config:
         tok_cfg.update(extra_config)
 

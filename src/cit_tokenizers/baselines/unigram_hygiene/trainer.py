@@ -3,6 +3,7 @@ import os
 from ...interface.contract import Contract, ContractConfig
 from ...io.data import iter_text
 from ...artifacts.hf_artifact import save_hf_tokenizer
+from ...artifacts.hygiene_artifact import HygieneArtifact, resolve_versions, save_hygiene_artifact
 from tokenizers import Tokenizer, models, pre_tokenizers, trainers
 
 def train_unigram_hygiene(
@@ -16,6 +17,11 @@ def train_unigram_hygiene(
     min_frequency: int = 10,
     model_max_length: int = 512,
     clean: bool = True,
+    hygiene_outdir: str | None = None,
+    tokenizer_version: str | None = None,
+    hygiene_version: str | None = None,
+    version: str | None = None,
+    emit_contract_in_tokenizer_dir: bool = False,
 ) -> None:
     os.makedirs(outdir, exist_ok=True)
     contract = Contract(contract_cfg)
@@ -35,7 +41,35 @@ def train_unigram_hygiene(
 
     tokenizer.train_from_iterator(gen(), trainer=trainer)
 
-    save_hf_tokenizer(tokenizer, outdir, model_max_length=model_max_length)
+    resolved_versions = None
+    if hygiene_outdir is not None or tokenizer_version or hygiene_version or version:
+        tokenizer_version, hygiene_version = resolve_versions(
+            tokenizer_version=tokenizer_version,
+            hygiene_version=hygiene_version,
+            version=version,
+        )
+        resolved_versions = (tokenizer_version, hygiene_version)
 
-    with open(os.path.join(outdir, "cit_contract.json"), "w", encoding="utf-8") as f:
-        f.write(contract_cfg.to_json())
+    save_hf_tokenizer(
+        tokenizer,
+        outdir,
+        model_max_length=model_max_length,
+        tokenizer_version=tokenizer_version,
+        hygiene_version=hygiene_version,
+    )
+
+    if hygiene_outdir is not None:
+        tok_ver, hyg_ver = resolved_versions  # type: ignore[misc]
+        save_hygiene_artifact(
+            HygieneArtifact(
+                hygiene_version=hyg_ver,
+                tokenizer_version=tok_ver,
+                contract=contract_cfg,
+            ),
+            hygiene_outdir,
+            overwrite=True,
+        )
+
+    if emit_contract_in_tokenizer_dir or hygiene_outdir is None:
+        with open(os.path.join(outdir, "cit_contract.json"), "w", encoding="utf-8") as f:
+            f.write(contract_cfg.to_json())

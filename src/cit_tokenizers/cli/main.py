@@ -194,6 +194,18 @@ def _add_baseline_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--model-max-length", type=int, default=512)
 
 
+def _add_hygiene_artifact_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--hygiene-outdir", default=None, help="Output dir for hygiene artifact (optional).")
+    p.add_argument("--tokenizer-version", default=None, help="Tokenizer artifact version.")
+    p.add_argument("--hygiene-version", default=None, help="Hygiene artifact version.")
+    p.add_argument("--version", default=None, help="Shortcut to set both tokenizer_version and hygiene_version.")
+    p.add_argument(
+        "--emit-contract",
+        action="store_true",
+        help="Also write cit_contract.json into tokenizer outdir for legacy compatibility.",
+    )
+
+
 def cmd_train_bpeh(args: argparse.Namespace) -> None:
     configure_logging(args.log_level)
     contract_cfg = _load_contract(args)
@@ -208,6 +220,11 @@ def cmd_train_bpeh(args: argparse.Namespace) -> None:
         min_frequency=int(args.min_freq),
         model_max_length=int(args.model_max_length),
         clean=bool(args.clean),
+        hygiene_outdir=args.hygiene_outdir,
+        tokenizer_version=args.tokenizer_version,
+        hygiene_version=args.hygiene_version,
+        version=args.version,
+        emit_contract_in_tokenizer_dir=bool(args.emit_contract),
     )
 
 
@@ -225,6 +242,11 @@ def cmd_train_wordpieceh(args: argparse.Namespace) -> None:
         min_frequency=int(args.min_freq),
         model_max_length=int(args.model_max_length),
         clean=bool(args.clean),
+        hygiene_outdir=args.hygiene_outdir,
+        tokenizer_version=args.tokenizer_version,
+        hygiene_version=args.hygiene_version,
+        version=args.version,
+        emit_contract_in_tokenizer_dir=bool(args.emit_contract),
     )
 
 
@@ -242,6 +264,11 @@ def cmd_train_unigramh(args: argparse.Namespace) -> None:
         min_frequency=int(args.min_freq),
         model_max_length=int(args.model_max_length),
         clean=bool(args.clean),
+        hygiene_outdir=args.hygiene_outdir,
+        tokenizer_version=args.tokenizer_version,
+        hygiene_version=args.hygiene_version,
+        version=args.version,
+        emit_contract_in_tokenizer_dir=bool(args.emit_contract),
     )
 
 
@@ -282,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_clean_args(bpe_p)
     _add_contract_args(bpe_p)
     _add_baseline_args(bpe_p)
+    _add_hygiene_artifact_args(bpe_p)
     bpe_p.set_defaults(func=cmd_train_bpeh)
 
     wp_p = train_sub.add_parser("wordpieceh", help="Train WordPiece+Hygiene baseline")
@@ -289,6 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_clean_args(wp_p)
     _add_contract_args(wp_p)
     _add_baseline_args(wp_p)
+    _add_hygiene_artifact_args(wp_p)
     wp_p.set_defaults(func=cmd_train_wordpieceh)
 
     uni_p = train_sub.add_parser("unigramh", help="Train Unigram+Hygiene baseline")
@@ -296,6 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_clean_args(uni_p)
     _add_contract_args(uni_p)
     _add_baseline_args(uni_p)
+    _add_hygiene_artifact_args(uni_p)
     uni_p.set_defaults(func=cmd_train_unigramh)
 
     # Validate

@@ -11,6 +11,7 @@ __version__ = "0.7.0"
 
 from .interface.contract import Contract, ContractConfig
 from .artifacts.hf_artifact import save_hf_tokenizer
+from .hygiene.runtime import HygieneRuntime, load_hygiene_runtime, load_tokenizer_config, assert_version_binding
 from .cit.trainer import CITTrainer
 from .config import CITTrainerConfig, CITBuildConfig
 
@@ -28,6 +29,10 @@ __all__ = [
     "Contract",
     "ContractConfig",
     "save_hf_tokenizer",
+    "HygieneRuntime",
+    "load_hygiene_runtime",
+    "load_tokenizer_config",
+    "assert_version_binding",
     "CITTrainer",
     "CITTrainerConfig",
     "CITBuildConfig",

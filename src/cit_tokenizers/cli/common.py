@@ -19,6 +19,18 @@ def add_common_contract_args(p: argparse.ArgumentParser):
     p.add_argument("--structured-input", default=None, choices=["none", "http", "waf"])
     p.add_argument("--structured-max-len", type=int, default=None)
 
+
+def add_hygiene_artifact_args(p: argparse.ArgumentParser):
+    p.add_argument("--hygiene-outdir", default=None, help="Output dir for hygiene artifact (optional).")
+    p.add_argument("--tokenizer-version", default=None, help="Tokenizer artifact version.")
+    p.add_argument("--hygiene-version", default=None, help="Hygiene artifact version.")
+    p.add_argument("--version", default=None, help="Shortcut to set both tokenizer_version and hygiene_version.")
+    p.add_argument(
+        "--emit-contract",
+        action="store_true",
+        help="Also write cit_contract.json into tokenizer outdir for legacy compatibility.",
+    )
+
 def load_contract_config(args) -> ContractConfig:
     if args.contract_json:
         with open(args.contract_json, "r", encoding="utf-8") as f:
