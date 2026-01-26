@@ -10,12 +10,14 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..config import CITBuildConfig, CITTrainerConfig
 from ..interface.contract import Contract, ContractConfig
+from ..interface.http_struct import HTTP_STRUCT_TOKENS
 from .compiler import CompiledMatcher, compile_trie
 from .runtime import CITArtifact
 
 
 
 TAG_RE = re.compile(r"<[A-Z][A-Z0-9_]{1,31}>")
+TAG_INNER_RE = re.compile(r"[A-Z][A-Z0-9_]{1,31}")
 
 def _auto_special_tokens_http(texts: Sequence[str], *, min_freq: int = 1, max_tags: int = 64) -> List[str]:
     """Auto-discover uppercase angle-bracket tags like <METHOD> and <URL>.
@@ -209,6 +211,7 @@ class CITTrainer:
 
         preset = (self.cfg.preset or "default").strip().lower()
         if preset in ("http", "waf"):
+            auto_special.extend(HTTP_STRUCT_TOKENS)
             # Auto-detect uppercase tags like <METHOD>, <URL>, <HDR>
             auto_special.extend(_auto_special_tokens_http(proc, min_freq=max(1, self.cfg.min_freq), max_tags=64))
 
@@ -324,6 +327,15 @@ class CITTrainer:
                 while j < n and s[j] not in boundaries:
                     j += 1
                 seg = s[i:j]
+                if (
+                    i > 0
+                    and j < n
+                    and s[i - 1] == "<"
+                    and s[j] == ">"
+                    and TAG_INNER_RE.fullmatch(seg) is not None
+                ):
+                    i = j
+                    continue
 
                 # enumerate spans within segment
                 L = len(seg)

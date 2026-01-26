@@ -40,6 +40,28 @@ TOK_COOKIE_K = "<COOKIE_K>"
 TOK_COOKIE_V = "<COOKIE_V>"
 TOK_AUTH_BEARER = "<AUTH_BEARER>"
 TOK_AUTH_BASIC = "<AUTH_BASIC>"
+HTTP_STRUCT_TOKENS = [
+    TOK_METHOD,
+    TOK_URL,
+    TOK_PROT,
+    TOK_HDR,
+    TOK_BODY,
+    TOK_JSON,
+    TOK_FORM,
+    TOK_RAW,
+    TOK_TRUNC,
+    TOK_BYTES,
+    TOK_URLENC,
+    TOK_STR,
+    TOK_NUM,
+    TOK_QK,
+    TOK_QVAL,
+    TOK_COOKIE_K,
+    TOK_COOKIE_V,
+    TOK_AUTH_BEARER,
+    TOK_AUTH_BASIC,
+    "<LIST>",
+]
 
 
 def _ascii_lower(s: str) -> str:
